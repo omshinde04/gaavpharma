@@ -25,11 +25,11 @@ import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
 
 export default function BillingCounter({ currentUser, featureToggles, storeProfile }) {
-  const allowKhata = featureToggles?.allow_khata !== false;
-  const allowLooseTablets = featureToggles?.allow_loose_tablets !== false;
-  const allowWhatsApp = featureToggles?.allow_whatsapp !== false;
-  const enforceH1Doctor = featureToggles?.enforce_h1_doctor === true;
-  const isCashier = currentUser?.role === 'cashier';
+  const allowKhata = featureToggles?.allow_khata !== false && featureToggles?.allow_khata !== 'false' && featureToggles?.allow_khata !== 0;
+  const allowLooseTablets = featureToggles?.allow_loose_tablets !== false && featureToggles?.allow_loose_tablets !== 'false' && featureToggles?.allow_loose_tablets !== 0;
+  const allowWhatsApp = featureToggles?.allow_whatsapp !== false && featureToggles?.allow_whatsapp !== 'false' && featureToggles?.allow_whatsapp !== 0;
+  const enforceH1Doctor = featureToggles?.enforce_h1_doctor === true || featureToggles?.enforce_h1_doctor === 'true' || featureToggles?.enforce_h1_doctor === 1;
+  const isCashier = currentUser?.role?.toLowerCase() === 'cashier';
   const maxCashierDiscount = Number(featureToggles?.max_cashier_discount ?? 10);
 
   // Search state

@@ -99,10 +99,16 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleGlobalKeys);
   }, [currentUser]);
 
-  const handleLoginSuccess = (user) => {
+  const handleLoginSuccess = async (user) => {
     setCurrentUser(user);
     try {
       localStorage.setItem('gaavpharma_active_user', JSON.stringify(user));
+      const [toggles, profile] = await Promise.all([
+        api.getFeatureToggles(),
+        api.getStoreProfile()
+      ]);
+      if (toggles) setFeatureToggles(toggles);
+      if (profile) setStoreProfile(profile);
     } catch (err) {
       console.error('Failed to persist session:', err);
     }

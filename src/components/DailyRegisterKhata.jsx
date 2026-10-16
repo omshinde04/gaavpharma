@@ -23,10 +23,14 @@ import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
 
 export default function DailyRegisterKhata({ currentUser, featureToggles, storeProfile }) {
-  const allowKhata = featureToggles?.allow_khata !== false;
-  const allowWhatsApp = featureToggles?.allow_whatsapp !== false;
-  const isCashier = currentUser?.role === 'cashier';
-  const hideDrawerFromCashier = isCashier && featureToggles?.hide_drawer_from_cashier === true;
+  const allowKhata = featureToggles?.allow_khata !== false && featureToggles?.allow_khata !== 'false' && featureToggles?.allow_khata !== 0;
+  const allowWhatsApp = featureToggles?.allow_whatsapp !== false && featureToggles?.allow_whatsapp !== 'false' && featureToggles?.allow_whatsapp !== 0;
+  const isCashier = currentUser?.role?.toLowerCase() === 'cashier';
+  const hideDrawerFromCashier = isCashier && (
+    featureToggles?.hide_drawer_from_cashier === true ||
+    featureToggles?.hide_drawer_from_cashier === 'true' ||
+    featureToggles?.hide_drawer_from_cashier === 1
+  );
 
   const [subTab, setSubTab] = useState('register'); // 'register' | 'khata'
   const [summary, setSummary] = useState({
