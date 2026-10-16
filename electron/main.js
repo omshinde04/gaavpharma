@@ -25,8 +25,6 @@ function createWindow() {
   if (isDev) {
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
     mainWindow.loadURL(devUrl);
-    // Open DevTools in dev mode if needed
-    // mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
@@ -64,6 +62,28 @@ app.on('window-all-closed', () => {
 });
 
 function setupIpcHandlers() {
+  // Licensing & Subscription (SaaS)
+  ipcMain.handle('auth:getHardwareId', () => db.getHardwareId());
+  ipcMain.handle('auth:getLicenseStatus', () => db.getLicenseStatus());
+  ipcMain.handle('auth:generateLicenseKey', (_, data) => db.generateLicenseKey(data));
+  ipcMain.handle('auth:activateLicense', (_, key) => db.activateLicense(key));
+  ipcMain.handle('auth:generateRenewalCode', (_, data) => db.generateRenewalCode(data));
+  ipcMain.handle('auth:applyRenewalCode', (_, code) => db.applyRenewalCode(code));
+
+  // Authentication & Staff (RBAC)
+  ipcMain.handle('auth:loginWithPin', (_, pin) => db.loginWithPin(pin));
+  ipcMain.handle('auth:loginWithCredentials', (_, u, p) => db.loginWithCredentials(u, p));
+  ipcMain.handle('auth:getUsers', () => db.getUsers());
+  ipcMain.handle('auth:addUser', (_, data) => db.addUser(data));
+  ipcMain.handle('auth:updateUser', (_, id, data) => db.updateUser(id, data));
+  ipcMain.handle('auth:deleteUser', (_, id) => db.deleteUser(id));
+
+  // Store Profile & Feature Toggles
+  ipcMain.handle('cfg:getStoreProfile', () => db.getStoreProfile());
+  ipcMain.handle('cfg:updateStoreProfile', (_, data) => db.updateStoreProfile(data));
+  ipcMain.handle('cfg:getFeatureToggles', () => db.getFeatureToggles());
+  ipcMain.handle('cfg:updateFeatureToggle', (_, key, val) => db.updateFeatureToggle(key, val));
+
   // Products & Batches
   ipcMain.handle('db:searchProducts', (_, query) => db.searchProducts(query));
   ipcMain.handle('db:getProductByBarcode', (_, barcode) => db.getProductByBarcode(barcode));

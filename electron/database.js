@@ -1,8 +1,11 @@
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const crypto = require('crypto');
 const Database = require('better-sqlite3');
 
 let db = null;
+const MASTER_SECRET = 'gaavpharma-super-secret-master-key-2026';
 
 function parseExpiryDate(mmYyStr) {
   if (!mmYyStr) return null;
@@ -12,8 +15,26 @@ function parseExpiryDate(mmYyStr) {
   let year = parseInt(parts[1], 10);
   if (isNaN(month) || isNaN(year)) return null;
   if (year < 100) year += 2000;
-  // Expiry is end of the month
   return new Date(year, month, 0, 23, 59, 59);
+}
+
+function getHardwareId() {
+  try {
+    const raw = [os.hostname(), os.platform(), os.arch(), os.cpus()[0]?.model || 'CPU'].join('|');
+    const hash = crypto.createHash('sha256').update(raw).digest('hex').toUpperCase();
+    return `GP-${hash.slice(0, 4)}-${hash.slice(4, 8)}-${hash.slice(8, 12)}`;
+  } catch {
+    return 'GP-OFFLINE-NODE-001';
+  }
+}
+
+function signPayload(payloadStr) {
+  return crypto.createHmac('sha256', MASTER_SECRET).update(payloadStr).digest('hex').slice(0, 16);
+}
+
+function verifyPayloadSignature(payloadStr, signature) {
+  const expected = signPayload(payloadStr);
+  return expected === signature;
 }
 
 function initDatabase(customPath) {
@@ -119,6 +140,50 @@ function createTables() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- 3-Tier SaaS System Tables
+    CREATE TABLE IF NOT EXISTS license (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      license_key TEXT NOT NULL,
+      store_name TEXT NOT NULL,
+      owner_phone TEXT,
+      plan_type TEXT DEFAULT 'annual',
+      hardware_id TEXT NOT NULL,
+      activated_at DATETIME NOT NULL,
+      expires_at DATETIME NOT NULL,
+      last_checked_at DATETIME NOT NULL,
+      features_json TEXT NOT NULL,
+      signature TEXT NOT NULL,
+      status TEXT DEFAULT 'ACTIVE'
+    );
+
+    CREATE TABLE IF NOT EXISTS store_profile (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      store_name TEXT NOT NULL DEFAULT 'Anand Medical & General Stores',
+      dl_number TEXT DEFAULT '20B/21B-MH-SOL-194829',
+      gstin TEXT DEFAULT '27AABCA1234F1Z9',
+      address TEXT DEFAULT 'Near Bus Stand, Main Road',
+      phone TEXT DEFAULT '+91 98220 12345',
+      upi_id TEXT DEFAULT 'anandmedical@oksbi',
+      printer_type TEXT DEFAULT '80mm',
+      auto_print BOOLEAN DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      display_name TEXT NOT NULL,
+      pin_code TEXT NOT NULL,
+      password_hash TEXT,
+      role TEXT CHECK(role IN ('super_admin', 'store_admin', 'cashier')) NOT NULL DEFAULT 'cashier',
+      is_active BOOLEAN DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS feature_toggles (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
     CREATE INDEX IF NOT EXISTS idx_products_salt ON products(generic_salt);
     CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
@@ -128,6 +193,83 @@ function createTables() {
 }
 
 function seedInitialData() {
+  // 1. Seed Store Profile
+  const storeProfileCount = db.prepare('SELECT COUNT(*) as count FROM store_profile').get().count;
+  if (storeProfileCount === 0) {
+    db.prepare(`
+      INSERT INTO store_profile (id, store_name, dl_number, gstin, address, phone, upi_id, printer_type, auto_print)
+      VALUES (1, 'Anand Medical & General Stores', '20B/21B-MH-SOL-194829', '27AABCA1234F1Z9', 'Near Bus Stand, Main Road', '+91 98220 12345', 'anandmedical@oksbi', '80mm', 0)
+    `).run();
+  }
+
+  // 2. Seed Default License (Valid 1-Year Pro Plan for Anand Medical)
+  const licenseCount = db.prepare('SELECT COUNT(*) as count FROM license').get().count;
+  if (licenseCount === 0) {
+    const hwid = getHardwareId();
+    const expiresAt = new Date(Date.now() + 365 * 86400000).toISOString();
+    const payload = {
+      storeName: 'Anand Medical & General Stores',
+      ownerPhone: '9822012345',
+      plan: 'annual',
+      hardwareId: hwid,
+      features: {
+        loose_tablets: true,
+        expiry_radar: true,
+        family_khata: true,
+        whatsapp_bills: true,
+        custom_discounts: true
+      },
+      issuedAt: new Date().toISOString(),
+      expiresAt
+    };
+    const jsonStr = JSON.stringify(payload);
+    const b64 = Buffer.from(jsonStr).toString('base64url');
+    const sig = signPayload(jsonStr);
+    const key = `GP-ACT-${b64}.${sig}`;
+
+    db.prepare(`
+      INSERT INTO license (license_key, store_name, owner_phone, plan_type, hardware_id, activated_at, expires_at, last_checked_at, features_json, signature, status)
+      VALUES (?, ?, ?, 'annual', ?, datetime('now'), ?, datetime('now'), ?, ?, 'ACTIVE')
+    `).run(
+      key,
+      payload.storeName,
+      payload.ownerPhone,
+      hwid,
+      expiresAt,
+      JSON.stringify(payload.features),
+      sig
+    );
+  }
+
+  // 3. Seed Users (Super Admin, Store Owner, Cashier)
+  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+  if (userCount === 0) {
+    const insertUser = db.prepare(`
+      INSERT INTO users (username, display_name, pin_code, password_hash, role, is_active)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    // Super Admin (You - Software Provider)
+    insertUser.run('superadmin', 'Om Shinde (Founder)', '9999', 'admin123', 'super_admin', 1);
+    // Store Owner (Buyer)
+    insertUser.run('anand_admin', 'Anand Patil (Owner)', '1111', 'owner123', 'store_admin', 1);
+    // Counter Cashier
+    insertUser.run('cashier1', 'Ramesh (Counter 1)', '1234', null, 'cashier', 1);
+  }
+
+  // 4. Seed Feature Toggles
+  const toggleCount = db.prepare('SELECT COUNT(*) as count FROM feature_toggles').get().count;
+  if (toggleCount === 0) {
+    const insertToggle = db.prepare(`INSERT INTO feature_toggles (key, value) VALUES (?, ?)`);
+    insertToggle.run('allow_khata', 'true');
+    insertToggle.run('allow_loose_tablets', 'true');
+    insertToggle.run('allow_whatsapp', 'true');
+    insertToggle.run('enforce_h1_doctor', 'false');
+    insertToggle.run('max_cashier_discount', '10');
+    insertToggle.run('hide_drawer_from_cashier', 'false');
+  }
+
+  // 5. Seed Sample Inventory & Invoices
   const count = db.prepare('SELECT COUNT(*) as count FROM products').get().count;
   if (count > 0) return;
 
@@ -315,7 +457,6 @@ function seedInitialData() {
       }
     }
 
-    // Seed Distributors
     const insertDistributor = db.prepare(`
       INSERT INTO distributors (name, phone, gstin, pending_balance)
       VALUES (?, ?, ?, ?)
@@ -324,7 +465,6 @@ function seedInitialData() {
     insertDistributor.run('Sunlife Healthcare Agency', '9423098765', '27AABCS9876Q1Z8', 8600.00);
     insertDistributor.run('Balaji FMCG & Surgicals', '9860011223', '27AABCB4321R1Z5', 3100.00);
 
-    // Seed Khata Customers
     const insertKhata = db.prepare(`
       INSERT INTO customers_khata (name, mobile, balance)
       VALUES (?, ?, ?)
@@ -334,7 +474,6 @@ function seedInitialData() {
     insertKhata.run('Sunita Kadam (Asha Worker)', '9158442200', 250.00);
     insertKhata.run('Vitthal Shinde (Krushi Seva)', '9890123456', 0.00);
 
-    // Seed Khata Transactions
     const insertKhataTx = db.prepare(`
       INSERT INTO khata_transactions (customer_id, invoice_id, type, amount, note, created_at)
       VALUES (?, ?, ?, ?, ?, datetime('now', '-2 days'))
@@ -342,7 +481,6 @@ function seedInitialData() {
     insertKhataTx.run(c1, null, 'DEBIT', 1450.00, 'Monthly regular medicines');
     insertKhataTx.run(c2, null, 'DEBIT', 680.00, 'BP medicines and inhaler');
 
-    // Seed Sample Invoices
     const insertInvoice = db.prepare(`
       INSERT INTO invoices (invoice_no, customer_name, customer_mobile, doctor_name, payment_mode, total_amount, discount, final_amount, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
@@ -352,17 +490,14 @@ function seedInitialData() {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
-    // Invoice 1
     const inv1 = insertInvoice.run('INV-20261016-001', 'Ganesh Kulkarni', '9822345678', 'Dr. Joshi', 'upi', 238.50, 0, 238.50, '-4 hours').lastInsertRowid;
     insertInvoiceItem.run(inv1, 1, 1, 0, 1, 34.00, 34.00);
     insertInvoiceItem.run(inv1, 2, 3, 0, 1, 204.50, 204.50);
 
-    // Invoice 2
     const inv2 = insertInvoice.run('INV-20261016-002', 'Anita Pawar', '9421556677', null, 'cash', 253.00, 5.00, 248.00, '-2 hours').lastInsertRowid;
     insertInvoiceItem.run(inv2, 8, 8, 0, 1, 195.00, 195.00);
     insertInvoiceItem.run(inv2, 9, 9, 0, 1, 58.00, 58.00);
 
-    // Invoice 3 (Khata)
     const inv3 = insertInvoice.run('INV-20261016-003', 'Ramesh Patil (Grampanchayat)', '9822114477', 'Dr. Patil', 'khata', 450.00, 0, 450.00, '-30 minutes').lastInsertRowid;
     insertInvoiceItem.run(inv3, 3, 5, 0, 2, 225.00, 450.00);
   });
@@ -370,7 +505,294 @@ function seedInitialData() {
   seedTx();
 }
 
-// ----------------- API Methods -----------------
+// ----------------- Licensing & Subscription -----------------
+
+function getLicenseStatus() {
+  if (!db) initDatabase();
+  const lic = db.prepare(`SELECT * FROM license ORDER BY id DESC LIMIT 1`).get();
+  const hwid = getHardwareId();
+
+  if (!lic) {
+    return {
+      isValid: false,
+      isTrial: false,
+      daysRemaining: 0,
+      status: 'NOT_ACTIVATED',
+      storeName: 'Unregistered Store',
+      hardwareId: hwid,
+      expiresAt: null,
+      plan: 'none',
+      features: {}
+    };
+  }
+
+  const now = new Date();
+  const exp = new Date(lic.expires_at);
+  const diffMs = exp.getTime() - now.getTime();
+  const daysRemaining = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+  const isExpired = diffMs <= 0;
+
+  let features = {};
+  try {
+    features = JSON.parse(lic.features_json || '{}');
+  } catch {
+    features = {};
+  }
+
+  return {
+    isValid: !isExpired && lic.status === 'ACTIVE',
+    isTrial: lic.plan_type === 'trial',
+    daysRemaining,
+    status: isExpired ? 'EXPIRED' : lic.status,
+    storeName: lic.store_name,
+    hardwareId: hwid,
+    ownerPhone: lic.owner_phone,
+    expiresAt: lic.expires_at,
+    plan: lic.plan_type,
+    features
+  };
+}
+
+function generateLicenseKey(data) {
+  const days = data.days || (data.plan === 'trial' ? 14 : 365);
+  const expiresAt = new Date(Date.now() + days * 86400000).toISOString();
+  const payload = {
+    storeName: data.storeName || 'Medical Store',
+    ownerPhone: data.ownerPhone || '',
+    plan: data.plan || 'annual',
+    hardwareId: data.hardwareId || 'ALL',
+    features: data.features || {
+      loose_tablets: true,
+      expiry_radar: true,
+      family_khata: true,
+      whatsapp_bills: true,
+      custom_discounts: true
+    },
+    issuedAt: new Date().toISOString(),
+    expiresAt
+  };
+  const jsonStr = JSON.stringify(payload);
+  const b64 = Buffer.from(jsonStr).toString('base64url');
+  const sig = signPayload(jsonStr);
+  return `GP-ACT-${b64}.${sig}`;
+}
+
+function activateLicense(licenseKey) {
+  if (!db) initDatabase();
+  if (!licenseKey || !licenseKey.startsWith('GP-ACT-')) {
+    throw new Error('Invalid license key format. Keys start with GP-ACT-');
+  }
+  const parts = licenseKey.replace('GP-ACT-', '').split('.');
+  if (parts.length !== 2) throw new Error('Malformed license key.');
+  const [b64, sig] = parts;
+  const jsonStr = Buffer.from(b64, 'base64url').toString('utf8');
+
+  if (!verifyPayloadSignature(jsonStr, sig)) {
+    throw new Error('Cryptographic signature verification failed.');
+  }
+
+  const payload = JSON.parse(jsonStr);
+  const currentHwid = getHardwareId();
+  if (payload.hardwareId && payload.hardwareId !== 'ALL' && payload.hardwareId !== currentHwid) {
+    throw new Error(`License is locked to Hardware ID ${payload.hardwareId}. Current machine is ${currentHwid}`);
+  }
+
+  db.prepare(`DELETE FROM license`).run();
+  db.prepare(`
+    INSERT INTO license (license_key, store_name, owner_phone, plan_type, hardware_id, activated_at, expires_at, last_checked_at, features_json, signature, status)
+    VALUES (?, ?, ?, ?, ?, datetime('now'), ?, datetime('now'), ?, ?, 'ACTIVE')
+  `).run(
+    licenseKey,
+    payload.storeName,
+    payload.ownerPhone || null,
+    payload.plan,
+    currentHwid,
+    payload.expiresAt,
+    JSON.stringify(payload.features),
+    sig
+  );
+
+  db.prepare(`UPDATE store_profile SET store_name = ? WHERE id = 1`).run(payload.storeName);
+  return getLicenseStatus();
+}
+
+function generateRenewalCode(data) {
+  const days = data.days || 365;
+  const payload = {
+    storeName: data.storeName || 'Medical Store',
+    daysAdded: days,
+    issuedAt: new Date().toISOString()
+  };
+  const jsonStr = JSON.stringify(payload);
+  const b64 = Buffer.from(jsonStr).toString('base64url');
+  const sig = signPayload(jsonStr);
+  return `GP-REN-${b64}.${sig}`;
+}
+
+function applyRenewalCode(renewalCode) {
+  if (!db) initDatabase();
+  if (!renewalCode || !renewalCode.startsWith('GP-REN-')) {
+    throw new Error('Invalid renewal code format. Codes start with GP-REN-');
+  }
+  const parts = renewalCode.replace('GP-REN-', '').split('.');
+  if (parts.length !== 2) throw new Error('Malformed renewal code.');
+  const [b64, sig] = parts;
+  const jsonStr = Buffer.from(b64, 'base64url').toString('utf8');
+
+  if (!verifyPayloadSignature(jsonStr, sig)) {
+    throw new Error('Cryptographic signature verification failed.');
+  }
+
+  const payload = JSON.parse(jsonStr);
+  const currentLic = db.prepare(`SELECT * FROM license ORDER BY id DESC LIMIT 1`).get();
+  if (!currentLic) throw new Error('No active license found to renew.');
+
+  const currentExpiry = new Date(currentLic.expires_at).getTime();
+  const baseTime = currentExpiry > Date.now() ? currentExpiry : Date.now();
+  const newExpiry = new Date(baseTime + payload.daysAdded * 86400000).toISOString();
+
+  db.prepare(`
+    UPDATE license 
+    SET expires_at = ?, status = 'ACTIVE', last_checked_at = datetime('now')
+    WHERE id = ?
+  `).run(newExpiry, currentLic.id);
+
+  return getLicenseStatus();
+}
+
+// ----------------- Multi-User Authentication -----------------
+
+function loginWithPin(pin) {
+  if (!db) initDatabase();
+  const user = db.prepare(`
+    SELECT id, username, display_name, role, is_active FROM users 
+    WHERE pin_code = ? AND is_active = 1 LIMIT 1
+  `).get(pin.trim());
+
+  if (!user) return null;
+  return user;
+}
+
+function loginWithCredentials(username, password) {
+  if (!db) initDatabase();
+  const user = db.prepare(`
+    SELECT id, username, display_name, role, is_active, password_hash FROM users 
+    WHERE LOWER(username) = ? AND is_active = 1 LIMIT 1
+  `).get(username.trim().toLowerCase());
+
+  if (!user) return null;
+  if (user.password_hash && user.password_hash !== password) {
+    return null;
+  }
+  const { password_hash, ...safeUser } = user;
+  return safeUser;
+}
+
+function getUsers() {
+  if (!db) initDatabase();
+  return db.prepare(`
+    SELECT id, username, display_name, pin_code, role, is_active, created_at 
+    FROM users 
+    ORDER BY role ASC, display_name ASC
+  `).all();
+}
+
+function addUser(userData) {
+  if (!db) initDatabase();
+  const stmt = db.prepare(`
+    INSERT INTO users (username, display_name, pin_code, password_hash, role, is_active)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const res = stmt.run(
+    userData.username.trim().toLowerCase(),
+    userData.display_name.trim(),
+    userData.pin_code.trim(),
+    userData.password || null,
+    userData.role || 'cashier',
+    userData.is_active !== undefined ? (userData.is_active ? 1 : 0) : 1
+  );
+  return { id: res.lastInsertRowid, ...userData };
+}
+
+function updateUser(id, userData) {
+  if (!db) initDatabase();
+  db.prepare(`
+    UPDATE users 
+    SET display_name = COALESCE(?, display_name),
+        pin_code = COALESCE(?, pin_code),
+        role = COALESCE(?, role),
+        is_active = COALESCE(?, is_active)
+    WHERE id = ?
+  `).run(
+    userData.display_name || null,
+    userData.pin_code || null,
+    userData.role || null,
+    userData.is_active !== undefined ? (userData.is_active ? 1 : 0) : null,
+    id
+  );
+  return db.prepare(`SELECT id, username, display_name, pin_code, role, is_active FROM users WHERE id = ?`).get(id);
+}
+
+function deleteUser(id) {
+  if (!db) initDatabase();
+  db.prepare(`UPDATE users SET is_active = 0 WHERE id = ?`).run(id);
+  return { success: true };
+}
+
+// ----------------- Store Profile & Feature Toggles -----------------
+
+function getStoreProfile() {
+  if (!db) initDatabase();
+  return db.prepare(`SELECT * FROM store_profile WHERE id = 1`).get();
+}
+
+function updateStoreProfile(data) {
+  if (!db) initDatabase();
+  db.prepare(`
+    UPDATE store_profile 
+    SET store_name = COALESCE(?, store_name),
+        dl_number = COALESCE(?, dl_number),
+        gstin = COALESCE(?, gstin),
+        address = COALESCE(?, address),
+        phone = COALESCE(?, phone),
+        upi_id = COALESCE(?, upi_id),
+        printer_type = COALESCE(?, printer_type),
+        auto_print = COALESCE(?, auto_print)
+    WHERE id = 1
+  `).run(
+    data.store_name || null,
+    data.dl_number || null,
+    data.gstin || null,
+    data.address || null,
+    data.phone || null,
+    data.upi_id || null,
+    data.printer_type || null,
+    data.auto_print !== undefined ? (data.auto_print ? 1 : 0) : null
+  );
+  return getStoreProfile();
+}
+
+function getFeatureToggles() {
+  if (!db) initDatabase();
+  const rows = db.prepare(`SELECT key, value FROM feature_toggles`).all();
+  const toggles = {};
+  rows.forEach(r => {
+    toggles[r.key] = r.value === 'true' ? true : (r.value === 'false' ? false : r.value);
+  });
+  return toggles;
+}
+
+function updateFeatureToggle(key, value) {
+  if (!db) initDatabase();
+  const strVal = String(value);
+  db.prepare(`
+    INSERT INTO feature_toggles (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(key, strVal);
+  return getFeatureToggles();
+}
+
+// ----------------- Existing POS Methods -----------------
 
 function searchProducts(searchQuery) {
   if (!db) initDatabase();
@@ -390,7 +812,6 @@ function searchProducts(searchQuery) {
 
   return products.map(p => {
     let batches = getBatches.all(p.id);
-    // Sort batches FIFO by parsed expiry
     batches.sort((a, b) => {
       const d1 = parseExpiryDate(a.expiry_date) || new Date(2099, 1, 1);
       const d2 = parseExpiryDate(b.expiry_date) || new Date(2099, 1, 1);
@@ -541,7 +962,7 @@ function getExpiryRadarData() {
   const enriched = batches.map(b => {
     const expDate = parseExpiryDate(b.expiry_date);
     let daysRemaining = 9999;
-    let status = 'safe'; // 'critical' (< 30 days or expired), 'warning' (< 90 days), 'safe'
+    let status = 'safe';
 
     if (expDate) {
       const diffMs = expDate.getTime() - now.getTime();
@@ -644,13 +1065,11 @@ function createInvoice(invoiceData, items) {
       );
 
       if (item.batch_id) {
-        // If loose tablet, deduct fractional or 1 unit for whole strip
         const deductQty = item.is_loose_tablet ? Math.ceil(item.qty / (item.strip_size || 10)) : item.qty;
         decrementStock.run(deductQty, item.batch_id);
       }
     }
 
-    // Handle Khata transaction if payment_mode is 'khata'
     if (invoiceData.payment_mode === 'khata' && invoiceData.customer_mobile) {
       let customer = db.prepare(`SELECT * FROM customers_khata WHERE mobile = ?`).get(invoiceData.customer_mobile);
       let customerId;
@@ -819,6 +1238,22 @@ function addDistributor(data) {
 
 module.exports = {
   initDatabase,
+  getHardwareId,
+  getLicenseStatus,
+  generateLicenseKey,
+  activateLicense,
+  generateRenewalCode,
+  applyRenewalCode,
+  loginWithPin,
+  loginWithCredentials,
+  getUsers,
+  addUser,
+  updateUser,
+  deleteUser,
+  getStoreProfile,
+  updateStoreProfile,
+  getFeatureToggles,
+  updateFeatureToggle,
   searchProducts,
   getProductByBarcode,
   findSaltSubstitutes,

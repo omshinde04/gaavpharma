@@ -2,8 +2,14 @@ import React from 'react';
 import { Printer, MessageSquare, X, CheckCircle2, Store, Phone, Calendar, User, FileText } from 'lucide-react';
 import { api } from '../services/api';
 
-export default function ReceiptModal({ invoice, onClose, onNewSale }) {
+export default function ReceiptModal({ invoice, onClose, onNewSale, storeProfile, allowWhatsApp = true }) {
   if (!invoice) return null;
+
+  const storeName = storeProfile?.store_name || 'Anand Medical & General Stores';
+  const storeAddress = storeProfile?.address || 'Near Bus Stand, Main Road';
+  const dlNumber = storeProfile?.dl_number || '20B/21B-MH-SOL-194829';
+  const gstin = storeProfile?.gstin || '27AABCA1234F1Z9';
+  const phone = storeProfile?.phone || '+91 98220 12345';
 
   const handlePrint = async () => {
     await api.printReceipt();
@@ -22,10 +28,10 @@ export default function ReceiptModal({ invoice, onClose, onNewSale }) {
       )
       .join('%0A');
 
-    const msg = `*ANAND MEDICAL & GENERAL STORES*%0A` +
-      `Main Road, Near Bus Stand%0A` +
-      `DL: 20B/21B-MH-SOL-194829%0A` +
-      `GSTIN: 27AABCA1234F1Z9%0A` +
+    const msg = `*${storeName.toUpperCase()}*%0A` +
+      `${storeAddress}%0A` +
+      `DL: ${dlNumber}%0A` +
+      `GSTIN: ${gstin}%0A` +
       `--------------------------------%0A` +
       `*Invoice No:* ${invoice.invoice_no}%0A` +
       `*Date:* ${new Date(invoice.created_at || Date.now()).toLocaleDateString('en-IN')}%0A` +
@@ -37,8 +43,8 @@ export default function ReceiptModal({ invoice, onClose, onNewSale }) {
       `*TOTAL AMOUNT:* ₹${Number(invoice.final_amount).toFixed(2)}%0A` +
       `*Payment Mode:* ${invoice.payment_mode?.toUpperCase()}%0A` +
       `--------------------------------%0A` +
-      `Thank you for visiting Anand Medical. Get well soon!%0A` +
-      `Helpline: +91 98220 12345`;
+      `Thank you for visiting ${storeName}. Get well soon!%0A` +
+      `Helpline: ${phone}`;
 
     return `https://wa.me/${phoneWithCountry ? phoneWithCountry : ''}?text=${msg}`;
   };
@@ -74,12 +80,12 @@ export default function ReceiptModal({ invoice, onClose, onNewSale }) {
             {/* Receipt Header */}
             <div className="text-center pb-2 border-b border-dashed border-slate-400 space-y-0.5">
               <div className="font-bold text-xs uppercase tracking-wide text-slate-950">
-                Anand Medical & General Stores
+                {storeName}
               </div>
-              <div className="text-[10px] text-slate-600">Near Bus Stand, Main Road</div>
-              <div className="text-[9px] text-slate-500">DL: 20B/21B-MH-SOL-194829</div>
-              <div className="text-[9px] text-slate-500">GSTIN: 27AABCA1234F1Z9</div>
-              <div className="text-[9px] text-slate-500">Ph: +91 98220 12345</div>
+              <div className="text-[10px] text-slate-600">{storeAddress}</div>
+              <div className="text-[9px] text-slate-500">DL: {dlNumber}</div>
+              <div className="text-[9px] text-slate-500">GSTIN: {gstin}</div>
+              <div className="text-[9px] text-slate-500">Ph: {phone}</div>
             </div>
 
             {/* Bill Meta */}
@@ -180,7 +186,7 @@ export default function ReceiptModal({ invoice, onClose, onNewSale }) {
 
             {/* Footer */}
             <div className="text-center pt-1 text-[9px] text-slate-500 space-y-0.5">
-              <div>Thank You for Choosing Anand Medical</div>
+              <div>Thank You for Choosing {storeName}</div>
               <div>Get Well Soon • Keep Medicines in Cool Place</div>
               <div className="text-[8px] pt-0.5 text-slate-400">GaavPharma POS Desktop</div>
             </div>
@@ -197,14 +203,16 @@ export default function ReceiptModal({ invoice, onClose, onNewSale }) {
           </button>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleWhatsApp}
-              className="flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium text-xs shadow-2xs transition-colors"
-              title="Send bill on WhatsApp"
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span>WhatsApp Bill</span>
-            </button>
+            {allowWhatsApp && (
+              <button
+                onClick={handleWhatsApp}
+                className="flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium text-xs shadow-2xs transition-colors"
+                title="Send bill on WhatsApp"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                <span>WhatsApp Bill</span>
+              </button>
+            )}
 
             <button
               onClick={handlePrint}

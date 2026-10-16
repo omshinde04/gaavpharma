@@ -15,12 +15,19 @@ import {
   RefreshCw,
   Search,
   Calendar,
-  Users
+  Users,
+  Lock,
+  Shield
 } from 'lucide-react';
 import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
 
-export default function DailyRegisterKhata() {
+export default function DailyRegisterKhata({ currentUser, featureToggles, storeProfile }) {
+  const allowKhata = featureToggles?.allow_khata !== false;
+  const allowWhatsApp = featureToggles?.allow_whatsapp !== false;
+  const isCashier = currentUser?.role === 'cashier';
+  const hideDrawerFromCashier = isCashier && featureToggles?.hide_drawer_from_cashier === true;
+
   const [subTab, setSubTab] = useState('register'); // 'register' | 'khata'
   const [summary, setSummary] = useState({
     today: {
@@ -174,11 +181,18 @@ export default function DailyRegisterKhata() {
           <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
             Today's Gross Sales
           </div>
-          <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
-            ₹{summary.today?.total_sales?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-          </div>
+          {hideDrawerFromCashier ? (
+            <div className="flex items-center space-x-1.5 mt-1 text-slate-400">
+              <Lock className="w-4 h-4 text-amber-400" />
+              <span className="font-mono text-base font-semibold tracking-widest text-slate-400">••••••</span>
+            </div>
+          ) : (
+            <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
+              ₹{summary.today?.total_sales?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          )}
           <div className="text-[10px] text-slate-400 mt-0.5 font-mono">
-            {summary.today?.total_invoices || 0} Bills Issued
+            {hideDrawerFromCashier ? 'Confidential (Admin only)' : `${summary.today?.total_invoices || 0} Bills Issued`}
           </div>
         </div>
 
@@ -188,11 +202,18 @@ export default function DailyRegisterKhata() {
             <span>Cash in Hand</span>
             <Banknote className="w-3.5 h-3.5 text-emerald-600" />
           </div>
-          <div className="text-xl font-bold font-mono text-slate-900 mt-1">
-            ₹{summary.today?.cash_total?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-          </div>
+          {hideDrawerFromCashier ? (
+            <div className="flex items-center space-x-1.5 mt-1 text-slate-400">
+              <Lock className="w-4 h-4 text-amber-500" />
+              <span className="font-mono text-base font-semibold tracking-widest text-slate-500">••••••</span>
+            </div>
+          ) : (
+            <div className="text-xl font-bold font-mono text-slate-900 mt-1">
+              ₹{summary.today?.cash_total?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          )}
           <div className="text-[10px] text-slate-400 mt-0.5">
-            Physical drawer cash
+            {hideDrawerFromCashier ? 'Confidential drawer cash' : 'Physical drawer cash'}
           </div>
         </div>
 
@@ -255,7 +276,13 @@ export default function DailyRegisterKhata() {
           </button>
 
           <button
-            onClick={() => setSubTab('khata')}
+            onClick={() => {
+              if (!allowKhata) {
+                alert('Khata Credit Ledger has been turned OFF by the Store Admin.');
+                return;
+              }
+              setSubTab('khata');
+            }}
             className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 ${
               subTab === 'khata'
                 ? 'border-emerald-600 text-slate-900 font-semibold'
@@ -264,6 +291,11 @@ export default function DailyRegisterKhata() {
           >
             <BookMarked className="w-3.5 h-3.5 text-slate-400" />
             <span>Family Khata Accounts ({customers.length})</span>
+            {!allowKhata && (
+              <span className="text-[9px] bg-slate-100 text-slate-500 border border-slate-200 px-1 py-0.2 rounded font-normal flex items-center gap-0.5">
+                <Lock className="w-2.5 h-2.5 text-slate-400" /> Deactivated
+              </span>
+            )}
           </button>
         </div>
 
@@ -588,6 +620,8 @@ export default function DailyRegisterKhata() {
       {selectedInvoice && (
         <ReceiptModal
           invoice={selectedInvoice}
+          storeProfile={storeProfile}
+          allowWhatsApp={allowWhatsApp}
           onClose={() => setSelectedInvoice(null)}
           onNewSale={() => setSelectedInvoice(null)}
         />

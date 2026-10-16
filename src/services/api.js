@@ -4,6 +4,47 @@ const isElectron = typeof window !== 'undefined' && window.electronAPI !== undef
 
 // In-memory fallback mock for development/browser preview if not in Electron
 const fallbackStorage = {
+  license: {
+    isValid: true,
+    isTrial: false,
+    daysRemaining: 364,
+    status: 'ACTIVE',
+    storeName: 'Anand Medical & General Stores',
+    hardwareId: 'GP-4298-D340-0C93',
+    ownerPhone: '+91 98220 12345',
+    expiresAt: new Date(Date.now() + 364 * 86400000).toISOString(),
+    plan: 'annual',
+    features: {
+      loose_tablets: true,
+      expiry_radar: true,
+      family_khata: true,
+      whatsapp_bills: true,
+      custom_discounts: true
+    }
+  },
+  storeProfile: {
+    store_name: 'Anand Medical & General Stores',
+    dl_number: '20B/21B-MH-SOL-194829',
+    gstin: '27AABCA1234F1Z9',
+    address: 'Near Bus Stand, Main Road',
+    phone: '+91 98220 12345',
+    upi_id: 'anandmedical@oksbi',
+    printer_type: '80mm',
+    auto_print: 0
+  },
+  users: [
+    { id: 1, username: 'superadmin', display_name: 'Om Shinde (Founder)', pin_code: '9999', role: 'super_admin', is_active: 1 },
+    { id: 2, username: 'anand_admin', display_name: 'Anand Patil (Owner)', pin_code: '1111', role: 'store_admin', is_active: 1 },
+    { id: 3, username: 'cashier1', display_name: 'Ramesh (Counter 1)', pin_code: '1234', role: 'cashier', is_active: 1 }
+  ],
+  featureToggles: {
+    allow_khata: true,
+    allow_loose_tablets: true,
+    allow_whatsapp: true,
+    enforce_h1_doctor: false,
+    max_cashier_discount: 10,
+    hide_drawer_from_cashier: false
+  },
   products: [
     {
       id: 1,
@@ -194,6 +235,120 @@ const fallbackStorage = {
 
 export const api = {
   isElectron,
+
+  // Licensing & Subscription (SaaS)
+  getHardwareId: async () => {
+    if (isElectron) return window.electronAPI.getHardwareId();
+    return fallbackStorage.license.hardwareId;
+  },
+
+  getLicenseStatus: async () => {
+    if (isElectron) return window.electronAPI.getLicenseStatus();
+    return fallbackStorage.license;
+  },
+
+  generateLicenseKey: async (data) => {
+    if (isElectron) return window.electronAPI.generateLicenseKey(data);
+    const jsonStr = JSON.stringify({
+      storeName: data.storeName || 'Medical Store',
+      plan: data.plan || 'annual',
+      days: data.days || 365,
+      features: data.features || {}
+    });
+    const b64 = btoa(jsonStr).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return `GP-ACT-${b64}.webmock77821`;
+  },
+
+  activateLicense: async (key) => {
+    if (isElectron) return window.electronAPI.activateLicense(key);
+    fallbackStorage.license.isValid = true;
+    fallbackStorage.license.daysRemaining = 365;
+    fallbackStorage.license.status = 'ACTIVE';
+    return fallbackStorage.license;
+  },
+
+  generateRenewalCode: async (data) => {
+    if (isElectron) return window.electronAPI.generateRenewalCode(data);
+    const jsonStr = JSON.stringify({ storeName: data.storeName, daysAdded: data.days || 365 });
+    const b64 = btoa(jsonStr).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return `GP-REN-${b64}.webmock77821`;
+  },
+
+  applyRenewalCode: async (code) => {
+    if (isElectron) return window.electronAPI.applyRenewalCode(code);
+    fallbackStorage.license.daysRemaining += 365;
+    fallbackStorage.license.isValid = true;
+    fallbackStorage.license.status = 'ACTIVE';
+    return fallbackStorage.license;
+  },
+
+  // Authentication & Users (RBAC)
+  loginWithPin: async (pin) => {
+    if (isElectron) return window.electronAPI.loginWithPin(pin);
+    const user = fallbackStorage.users.find(u => u.pin_code === pin.trim() && u.is_active);
+    return user || null;
+  },
+
+  loginWithCredentials: async (username, password) => {
+    if (isElectron) return window.electronAPI.loginWithCredentials(username, password);
+    const u = username.toLowerCase().trim();
+    if (u === 'superadmin' && password === 'admin123') return fallbackStorage.users[0];
+    if (u === 'anand_admin' && password === 'owner123') return fallbackStorage.users[1];
+    return null;
+  },
+
+  getUsers: async () => {
+    if (isElectron) return window.electronAPI.getUsers();
+    return fallbackStorage.users;
+  },
+
+  addUser: async (userData) => {
+    if (isElectron) return window.electronAPI.addUser(userData);
+    const newUser = {
+      id: Date.now(),
+      ...userData,
+      is_active: 1
+    };
+    fallbackStorage.users.push(newUser);
+    return newUser;
+  },
+
+  updateUser: async (id, userData) => {
+    if (isElectron) return window.electronAPI.updateUser(id, userData);
+    const u = fallbackStorage.users.find(user => user.id === id);
+    if (u) Object.assign(u, userData);
+    return u;
+  },
+
+  deleteUser: async (id) => {
+    if (isElectron) return window.electronAPI.deleteUser(id);
+    const u = fallbackStorage.users.find(user => user.id === id);
+    if (u) u.is_active = 0;
+    return { success: true };
+  },
+
+  // Store Profile & Feature Toggles
+  getStoreProfile: async () => {
+    if (isElectron) return window.electronAPI.getStoreProfile();
+    return fallbackStorage.storeProfile;
+  },
+
+  updateStoreProfile: async (data) => {
+    if (isElectron) return window.electronAPI.updateStoreProfile(data);
+    Object.assign(fallbackStorage.storeProfile, data);
+    return fallbackStorage.storeProfile;
+  },
+
+  getFeatureToggles: async () => {
+    if (isElectron) return window.electronAPI.getFeatureToggles();
+    return fallbackStorage.featureToggles;
+  },
+
+  updateFeatureToggle: async (key, value) => {
+    if (isElectron) return window.electronAPI.updateFeatureToggle(key, value);
+    fallbackStorage.featureToggles[key] = value;
+    return fallbackStorage.featureToggles;
+  },
 
   // Products
   searchProducts: async (query) => {

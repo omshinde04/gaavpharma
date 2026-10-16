@@ -1,6 +1,28 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  // Licensing & Subscription (SaaS)
+  getHardwareId: () => ipcRenderer.invoke('auth:getHardwareId'),
+  getLicenseStatus: () => ipcRenderer.invoke('auth:getLicenseStatus'),
+  generateLicenseKey: (data) => ipcRenderer.invoke('auth:generateLicenseKey', data),
+  activateLicense: (key) => ipcRenderer.invoke('auth:activateLicense', key),
+  generateRenewalCode: (data) => ipcRenderer.invoke('auth:generateRenewalCode', data),
+  applyRenewalCode: (code) => ipcRenderer.invoke('auth:applyRenewalCode', code),
+
+  // Authentication & Staff (RBAC)
+  loginWithPin: (pin) => ipcRenderer.invoke('auth:loginWithPin', pin),
+  loginWithCredentials: (username, password) => ipcRenderer.invoke('auth:loginWithCredentials', username, password),
+  getUsers: () => ipcRenderer.invoke('auth:getUsers'),
+  addUser: (userData) => ipcRenderer.invoke('auth:addUser', userData),
+  updateUser: (id, userData) => ipcRenderer.invoke('auth:updateUser', id, userData),
+  deleteUser: (id) => ipcRenderer.invoke('auth:deleteUser', id),
+
+  // Store Profile & Feature Toggles
+  getStoreProfile: () => ipcRenderer.invoke('cfg:getStoreProfile'),
+  updateStoreProfile: (data) => ipcRenderer.invoke('cfg:updateStoreProfile', data),
+  getFeatureToggles: () => ipcRenderer.invoke('cfg:getFeatureToggles'),
+  updateFeatureToggle: (key, value) => ipcRenderer.invoke('cfg:updateFeatureToggle', key, value),
+
   // Products & Batches
   searchProducts: (query) => ipcRenderer.invoke('db:searchProducts', query),
   getProductByBarcode: (barcode) => ipcRenderer.invoke('db:getProductByBarcode', barcode),

@@ -1,0 +1,584 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Sliders,
+  Store,
+  Users,
+  Shield,
+  Key,
+  CheckCircle2,
+  Plus,
+  Trash2,
+  Lock,
+  Phone,
+  FileText,
+  MapPin,
+  QrCode,
+  ToggleLeft,
+  ToggleRight,
+  Sparkles
+} from 'lucide-react';
+import { api } from '../services/api';
+
+export default function StoreSettingsModal({ onClose, onProfileUpdated, onTogglesUpdated, onOpenLicenseModal }) {
+  const [activeTab, setActiveTab] = useState('profile'); // 'profile' | 'toggles' | 'staff' | 'subscription'
+  const [profile, setProfile] = useState({
+    store_name: '',
+    dl_number: '',
+    gstin: '',
+    address: '',
+    phone: '',
+    upi_id: '',
+    printer_type: '80mm',
+    auto_print: 0
+  });
+
+  const [toggles, setToggles] = useState({
+    allow_khata: true,
+    allow_loose_tablets: true,
+    allow_whatsapp: true,
+    enforce_h1_doctor: false,
+    max_cashier_discount: 10,
+    hide_drawer_from_cashier: false
+  });
+
+  const [users, setUsers] = useState([]);
+  const [license, setLicense] = useState(null);
+  const [saveSuccess, setSaveSuccess] = useState('');
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newUserData, setNewUserData] = useState({
+    username: '',
+    display_name: '',
+    pin_code: '',
+    role: 'cashier'
+  });
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const p = await api.getStoreProfile();
+      const t = await api.getFeatureToggles();
+      const u = await api.getUsers();
+      const l = await api.getLicenseStatus();
+      if (p) setProfile(p);
+      if (t) setToggles(t);
+      if (u) setUsers(u);
+      if (l) setLicense(l);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleProfileSave = async (e) => {
+    e.preventDefault();
+    try {
+      const updated = await api.updateStoreProfile(profile);
+      setProfile(updated);
+      if (onProfileUpdated) onProfileUpdated(updated);
+      setSaveSuccess('Store Profile saved successfully.');
+      setTimeout(() => setSaveSuccess(''), 2500);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update store profile');
+    }
+  };
+
+  const handleToggleChange = async (key, val) => {
+    try {
+      const updated = await api.updateFeatureToggle(key, val);
+      setToggles(updated);
+      if (onTogglesUpdated) onTogglesUpdated(updated);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    if (!newUserData.username || !newUserData.display_name || !newUserData.pin_code) {
+      alert('All fields are required.');
+      return;
+    }
+    try {
+      await api.addUser(newUserData);
+      setShowAddUser(false);
+      setNewUserData({ username: '', display_name: '', pin_code: '', role: 'cashier' });
+      const u = await api.getUsers();
+      setUsers(u);
+    } catch (err) {
+      alert('Failed to add staff user. Username must be unique.');
+    }
+  };
+
+  const handleToggleUserStatus = async (user) => {
+    try {
+      await api.updateUser(user.id, { is_active: !user.is_active });
+      const u = await api.getUsers();
+      setUsers(u);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 select-none">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95">
+        {/* Header */}
+        <div className="bg-slate-900 text-white px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center space-x-2.5">
+            <Sliders className="w-5 h-5 text-emerald-400" />
+            <div>
+              <h3 className="font-semibold text-sm">Store Administration & Control Center</h3>
+              <p className="text-[11px] text-slate-400">Configure pharmacy profile, cashier feature toggles, and staff accounts</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-sm font-semibold">
+            ✕
+          </button>
+        </div>
+
+        {/* Tab Navigation */}
+        <div className="p-1 bg-slate-100 border-b border-slate-200 flex text-xs font-medium">
+          <button
+            onClick={() => setActiveTab('profile')}
+            className={`flex-1 py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              activeTab === 'profile' ? 'bg-white text-slate-900 shadow-2xs font-semibold' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Store className="w-3.5 h-3.5 text-slate-500" />
+            <span>Store Profile</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('toggles')}
+            className={`flex-1 py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              activeTab === 'toggles' ? 'bg-white text-slate-900 shadow-2xs font-semibold' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Shield className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Feature Toggles (ON/OFF)</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('staff')}
+            className={`flex-1 py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              activeTab === 'staff' ? 'bg-white text-slate-900 shadow-2xs font-semibold' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 text-blue-600" />
+            <span>Staff Management ({users.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('subscription')}
+            className={`flex-1 py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              activeTab === 'subscription' ? 'bg-white text-slate-900 shadow-2xs font-semibold' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Key className="w-3.5 h-3.5 text-amber-600" />
+            <span>Subscription</span>
+          </button>
+        </div>
+
+        {/* Tab Body */}
+        <div className="p-6 overflow-y-auto flex-1 font-sans text-xs">
+          {saveSuccess && (
+            <div className="mb-4 p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>{saveSuccess}</span>
+            </div>
+          )}
+
+          {activeTab === 'profile' && (
+            /* Store Profile Form */
+            <form onSubmit={handleProfileSave} className="space-y-3.5">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Store / Pharmacy Registered Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={profile.store_name}
+                    onChange={(e) => setProfile({ ...profile, store_name: e.target.value })}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-semibold focus:bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Drug License No. (DL 20B / 21B) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={profile.dl_number}
+                    onChange={(e) => setProfile({ ...profile, dl_number: e.target.value })}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    GSTIN Number *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={profile.gstin}
+                    onChange={(e) => setProfile({ ...profile, gstin: e.target.value })}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:bg-white"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Shop Address (Printed on Receipts) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={profile.address}
+                    onChange={(e) => setProfile({ ...profile, address: e.target.value })}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs focus:bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Counter Phone Number
+                  </label>
+                  <input
+                    type="text"
+                    value={profile.phone}
+                    onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    UPI ID for QR Code Billing
+                  </label>
+                  <input
+                    type="text"
+                    value={profile.upi_id}
+                    onChange={(e) => setProfile({ ...profile, upi_id: e.target.value })}
+                    placeholder="e.g. yourshop@oksbi"
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Thermal Printer Standard
+                  </label>
+                  <select
+                    value={profile.printer_type}
+                    onChange={(e) => setProfile({ ...profile, printer_type: e.target.value })}
+                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs focus:bg-white"
+                  >
+                    <option value="80mm">80mm ESC/POS Standard</option>
+                    <option value="58mm">58mm Compact POS</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2 border-t">
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold text-xs shadow-xs"
+                >
+                  Save Store Profile
+                </button>
+              </div>
+            </form>
+          )}
+
+          {activeTab === 'toggles' && (
+            /* Feature Toggles Panel */
+            <div className="space-y-4">
+              <div className="text-[11px] text-slate-500 mb-2">
+                Enable or disable functionality across counter terminals. Changes take effect immediately.
+              </div>
+
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
+                {/* Khata Toggle */}
+                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
+                  <div>
+                    <div className="font-semibold text-slate-900">Khata (Family Credit Billing)</div>
+                    <div className="text-[10px] text-slate-500">Allow customers to purchase on udhaari credit</div>
+                  </div>
+                  <button
+                    onClick={() => handleToggleChange('allow_khata', !toggles.allow_khata)}
+                    className="text-2xl"
+                  >
+                    {toggles.allow_khata ? (
+                      <ToggleRight className="w-8 h-8 text-emerald-600" />
+                    ) : (
+                      <ToggleLeft className="w-8 h-8 text-slate-300" />
+                    )}
+                  </button>
+                </div>
+
+                {/* Loose Tablet Math Toggle */}
+                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
+                  <div>
+                    <div className="font-semibold text-slate-900">Loose Cut Tablet Dispensing</div>
+                    <div className="text-[10px] text-slate-500">Allow selling fractional tablets out of strips (e.g. 4 tablets out of 10)</div>
+                  </div>
+                  <button
+                    onClick={() => handleToggleChange('allow_loose_tablets', !toggles.allow_loose_tablets)}
+                    className="text-2xl"
+                  >
+                    {toggles.allow_loose_tablets ? (
+                      <ToggleRight className="w-8 h-8 text-emerald-600" />
+                    ) : (
+                      <ToggleLeft className="w-8 h-8 text-slate-300" />
+                    )}
+                  </button>
+                </div>
+
+                {/* WhatsApp Receipts Toggle */}
+                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
+                  <div>
+                    <div className="font-semibold text-slate-900">1-Click WhatsApp Invoicing</div>
+                    <div className="text-[10px] text-slate-500">Generate formatted wa.me payment links for customers</div>
+                  </div>
+                  <button
+                    onClick={() => handleToggleChange('allow_whatsapp', !toggles.allow_whatsapp)}
+                    className="text-2xl"
+                  >
+                    {toggles.allow_whatsapp ? (
+                      <ToggleRight className="w-8 h-8 text-emerald-600" />
+                    ) : (
+                      <ToggleLeft className="w-8 h-8 text-slate-300" />
+                    )}
+                  </button>
+                </div>
+
+                {/* Schedule H1 Doctor Enforcement */}
+                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
+                  <div>
+                    <div className="font-semibold text-slate-900">Enforce Doctor Name for Schedule H1</div>
+                    <div className="text-[10px] text-slate-500">Block bill completion if antibiotic has no prescribing doctor entered</div>
+                  </div>
+                  <button
+                    onClick={() => handleToggleChange('enforce_h1_doctor', !toggles.enforce_h1_doctor)}
+                    className="text-2xl"
+                  >
+                    {toggles.enforce_h1_doctor ? (
+                      <ToggleRight className="w-8 h-8 text-emerald-600" />
+                    ) : (
+                      <ToggleLeft className="w-8 h-8 text-slate-300" />
+                    )}
+                  </button>
+                </div>
+
+                {/* Hide Financial Drawer from Cashiers */}
+                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
+                  <div>
+                    <div className="font-semibold text-slate-900">Hide Financial Register from Cashiers</div>
+                    <div className="text-[10px] text-slate-500">Cashiers cannot see today's total store revenue or gross drawer cash</div>
+                  </div>
+                  <button
+                    onClick={() => handleToggleChange('hide_drawer_from_cashier', !toggles.hide_drawer_from_cashier)}
+                    className="text-2xl"
+                  >
+                    {toggles.hide_drawer_from_cashier ? (
+                      <ToggleRight className="w-8 h-8 text-emerald-600" />
+                    ) : (
+                      <ToggleLeft className="w-8 h-8 text-slate-300" />
+                    )}
+                  </button>
+                </div>
+
+                {/* Maximum Cashier Discount */}
+                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
+                  <div>
+                    <div className="font-semibold text-slate-900">Maximum Cashier Discount Limit</div>
+                    <div className="text-[10px] text-slate-500">Cap the max discount % a cashier can apply without owner PIN</div>
+                  </div>
+                  <div className="flex items-center space-x-1.5 font-mono">
+                    <input
+                      type="number"
+                      min="0"
+                      max="30"
+                      value={toggles.max_cashier_discount || 10}
+                      onChange={(e) => handleToggleChange('max_cashier_discount', e.target.value)}
+                      className="w-16 px-2 py-1 bg-white border border-slate-300 rounded text-center text-xs font-bold"
+                    />
+                    <span className="text-slate-500 font-bold">%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'staff' && (
+            /* Staff Management */
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h4 className="font-semibold text-slate-900">Counter Staff & Cashiers</h4>
+                  <p className="text-[10px] text-slate-500">Manage 4-digit PINs and staff access rights</p>
+                </div>
+                <button
+                  onClick={() => setShowAddUser(true)}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Counter Staff</span>
+                </button>
+              </div>
+
+              <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
+                {users.map((u) => (
+                  <div key={u.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                    <div>
+                      <div className="font-semibold text-slate-900 flex items-center gap-2">
+                        <span>{u.display_name}</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 uppercase">
+                          {u.role}
+                        </span>
+                        {!u.is_active && (
+                          <span className="text-[10px] text-rose-700 bg-rose-50 px-1.5 py-0.2 rounded">
+                            Deactivated
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                        Username: <b>{u.username}</b> • PIN: <b>•••• ({u.pin_code})</b>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => handleToggleUserStatus(u)}
+                        className={`px-2.5 py-1 rounded text-[11px] font-medium border ${
+                          u.is_active
+                            ? 'border-slate-200 text-slate-700 hover:bg-slate-100'
+                            : 'border-emerald-200 text-emerald-800 bg-emerald-50'
+                        }`}
+                      >
+                        {u.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add User Modal */}
+              {showAddUser && (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  <div className="font-semibold text-slate-900 text-xs">Create New Counter Staff</div>
+                  <form onSubmit={handleCreateUser} className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">Full Name</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Sagar Pawar"
+                        value={newUserData.display_name}
+                        onChange={(e) => setNewUserData({ ...newUserData, display_name: e.target.value })}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">Username</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. sagar_counter2"
+                        value={newUserData.username}
+                        onChange={(e) => setNewUserData({ ...newUserData, username: e.target.value })}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">4-Digit Counter PIN</label>
+                      <input
+                        type="password"
+                        maxLength="4"
+                        required
+                        placeholder="e.g. 5566"
+                        value={newUserData.pin_code}
+                        onChange={(e) => setNewUserData({ ...newUserData, pin_code: e.target.value })}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs font-mono text-center font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">Role</label>
+                      <select
+                        value={newUserData.role}
+                        onChange={(e) => setNewUserData({ ...newUserData, role: e.target.value })}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs"
+                      >
+                        <option value="cashier">Counter Cashier</option>
+                        <option value="store_admin">Store Administrator</option>
+                      </select>
+                    </div>
+                    <div className="col-span-2 flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddUser(false)}
+                        className="px-3 py-1 border border-slate-200 rounded text-xs text-slate-600"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-4 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold"
+                      >
+                        Create Staff
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'subscription' && (
+            /* Subscription Details */
+            <div className="space-y-4">
+              <div className="p-4 bg-slate-900 text-white rounded-xl space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Current Active License
+                  </span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 uppercase">
+                    {license?.status || 'ACTIVE'}
+                  </span>
+                </div>
+                <div className="text-xl font-bold font-mono text-emerald-400">
+                  {license?.plan?.toUpperCase()} PLAN
+                </div>
+                <div className="flex justify-between text-xs text-slate-300 font-mono pt-2 border-t border-slate-800">
+                  <span>Days Remaining: <b>{license?.daysRemaining} days</b></span>
+                  <span>Expires: {license?.expiresAt ? new Date(license.expiresAt).toLocaleDateString('en-IN') : 'N/A'}</span>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                <div className="font-semibold text-slate-900 text-xs">Need to Renew or Upgrade?</div>
+                <p className="text-[11px] text-slate-500">
+                  Contact GaavPharma (+91 98220 12345) to receive your renewal code or upgrade to multi-counter support.
+                </p>
+                <button
+                  onClick={() => {
+                    onClose();
+                    if (onOpenLicenseModal) onOpenLicenseModal();
+                  }}
+                  className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-medium"
+                >
+                  Enter Renewal Code / License Key
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

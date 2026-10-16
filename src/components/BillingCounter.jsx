@@ -24,7 +24,14 @@ import {
 import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
 
-export default function BillingCounter() {
+export default function BillingCounter({ currentUser, featureToggles, storeProfile }) {
+  const allowKhata = featureToggles?.allow_khata !== false;
+  const allowLooseTablets = featureToggles?.allow_loose_tablets !== false;
+  const allowWhatsApp = featureToggles?.allow_whatsapp !== false;
+  const enforceH1Doctor = featureToggles?.enforce_h1_doctor === true;
+  const isCashier = currentUser?.role === 'cashier';
+  const maxCashierDiscount = Number(featureToggles?.max_cashier_discount ?? 10);
+
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -104,8 +111,9 @@ export default function BillingCounter() {
   }, [cart, paymentMode, discount, customerMobile, customerName, doctorName]);
 
   const cyclePaymentMode = () => {
-    const modes = ['cash', 'upi', 'khata', 'card'];
-    const nextIdx = (modes.indexOf(paymentMode) + 1) % modes.length;
+    const modes = allowKhata ? ['cash', 'upi', 'khata', 'card'] : ['cash', 'upi', 'card'];
+    const currentIdx = modes.indexOf(paymentMode);
+    const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % modes.length : 0;
     setPaymentMode(modes[nextIdx]);
   };
 
@@ -284,15 +292,54 @@ export default function BillingCounter() {
   const subtotal = cart.reduce((sum, item) => sum + item.total_price, 0);
   const netPayable = Math.max(0, subtotal - (parseFloat(discount) || 0));
 
+  const handleDiscountChange = (val) => {
+    const num = parseFloat(val) || 0;
+    if (isCashier && subtotal > 0) {
+      const maxVal = (subtotal * maxCashierDiscount) / 100;
+      if (num > maxVal + 0.01) {
+        alert(`Cashier discount is capped at ${maxCashierDiscount}% (₹${maxVal.toFixed(2)}) by Store Admin policy.`);
+        setDiscount(Number(maxVal.toFixed(2)));
+        return;
+      }
+    }
+    setDiscount(val);
+  };
+
   const handleCompleteSale = async () => {
     if (cart.length === 0) {
       alert('Cannot checkout: Bill is empty.');
       return;
     }
 
-    if (paymentMode === 'khata' && !customerMobile) {
-      alert('Customer mobile number is mandatory for Khata credit billing.');
+    if (paymentMode === 'khata') {
+      if (!allowKhata) {
+        alert('Khata credit billing is currently disabled by Store Admin settings.');
+        return;
+      }
+      if (!customerMobile) {
+        alert('Customer mobile number is mandatory for Khata credit billing.');
+        return;
+      }
+    }
+
+    // Schedule H1 Drug Compliance Check
+    const hasH1Item = cart.some((it) => it.is_schedule_h1 === 1);
+    if (hasH1Item && enforceH1Doctor && !doctorName.trim()) {
+      alert(
+        '⚠️ Schedule H1 Compliance:\n' +
+        'This bill contains Schedule H1 medicines (e.g. Augmentin / Azithromycin).\n' +
+        'Doctor\'s Name is strictly required under Drugs & Cosmetics Rules.'
+      );
       return;
+    }
+
+    // Cashier Discount Limit Enforcement
+    if (isCashier && subtotal > 0) {
+      const maxVal = (subtotal * maxCashierDiscount) / 100;
+      if ((parseFloat(discount) || 0) > maxVal + 0.05) {
+        alert(`Cashier discount cannot exceed ${maxCashierDiscount}% (₹${maxVal.toFixed(2)}).`);
+        return;
+      }
     }
 
     try {
@@ -414,7 +461,7 @@ export default function BillingCounter() {
                         </button>
                       )}
 
-                      {prod.category === 'medicine' && prod.strip_size > 1 && (
+                      {allowLooseTablets && prod.category === 'medicine' && prod.strip_size > 1 && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -541,26 +588,32 @@ export default function BillingCounter() {
                       </td>
                       <td className="py-2 px-3 font-sans">
                         {item.strip_size > 1 ? (
-                          <button
-                            onClick={() => toggleLooseTabletMode(idx)}
-                            className={`text-[10px] font-medium px-2 py-0.5 rounded border transition-colors inline-flex items-center gap-1 ${
-                              item.is_loose_tablet
-                                ? 'bg-amber-50 text-amber-800 border-amber-200'
-                                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                            }`}
-                          >
-                            {item.is_loose_tablet ? (
-                              <>
-                                <Scissors className="w-2.5 h-2.5 text-amber-600" />
-                                <span>Loose Tabs</span>
-                              </>
-                            ) : (
-                              <>
-                                <Package className="w-2.5 h-2.5 text-emerald-600" />
-                                <span>Full Strip</span>
-                              </>
-                            )}
-                          </button>
+                          allowLooseTablets ? (
+                            <button
+                              onClick={() => toggleLooseTabletMode(idx)}
+                              className={`text-[10px] font-medium px-2 py-0.5 rounded border transition-colors inline-flex items-center gap-1 ${
+                                item.is_loose_tablet
+                                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                  : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              }`}
+                            >
+                              {item.is_loose_tablet ? (
+                                <>
+                                  <Scissors className="w-2.5 h-2.5 text-amber-600" />
+                                  <span>Loose Tabs</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Package className="w-2.5 h-2.5 text-emerald-600" />
+                                  <span>Full Strip</span>
+                                </>
+                              )}
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-mono">
+                              Full Strip ({item.strip_size}s)
+                            </span>
+                          )
                         ) : (
                           <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
                             Unit Item
@@ -688,7 +741,7 @@ export default function BillingCounter() {
                 {[
                   { id: 'cash', label: 'Cash', icon: Banknote },
                   { id: 'upi', label: 'UPI / QR', icon: QrCode },
-                  { id: 'khata', label: 'Khata Credit', icon: BookMarked },
+                  ...(allowKhata ? [{ id: 'khata', label: 'Khata Credit', icon: BookMarked }] : []),
                   { id: 'card', label: 'Card / POS', icon: CreditCard }
                 ].map((mode) => {
                   const Icon = mode.icon;
@@ -713,12 +766,19 @@ export default function BillingCounter() {
 
             {/* Discount */}
             <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between text-xs">
-              <span className="font-medium text-slate-600">Bill Discount (₹):</span>
+              <div className="flex items-center space-x-1.5">
+                <span className="font-medium text-slate-600">Bill Discount (₹):</span>
+                {isCashier && (
+                  <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200/60 px-1.5 py-0.2 rounded font-mono">
+                    Max {maxCashierDiscount}%
+                  </span>
+                )}
+              </div>
               <input
                 type="number"
                 min="0"
                 value={discount}
-                onChange={(e) => setDiscount(e.target.value)}
+                onChange={(e) => handleDiscountChange(e.target.value)}
                 className="w-20 text-right px-2 py-1 bg-slate-50 border border-slate-200 rounded font-mono font-medium text-xs focus:bg-white"
               />
             </div>
@@ -838,6 +898,8 @@ export default function BillingCounter() {
       {completedInvoice && (
         <ReceiptModal
           invoice={completedInvoice}
+          storeProfile={storeProfile}
+          allowWhatsApp={allowWhatsApp}
           onClose={() => setCompletedInvoice(null)}
           onNewSale={() => {
             setCompletedInvoice(null);
