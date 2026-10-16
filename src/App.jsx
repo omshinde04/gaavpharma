@@ -216,8 +216,14 @@ export default function App() {
       {showLicenseModal && (
         <LicenseActivationModal
           licenseStatus={licenseStatus}
-          onActivationSuccess={(updated) => {
+          onActivationSuccess={async (updated) => {
             setLicenseStatus(updated);
+            try {
+              const freshProfile = await api.getStoreProfile();
+              if (freshProfile) setStoreProfile(freshProfile);
+            } catch (err) {
+              console.error(err);
+            }
             setShowLicenseModal(false);
           }}
           onClose={() => setShowLicenseModal(false)}

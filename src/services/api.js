@@ -261,8 +261,25 @@ export const api = {
 
   activateLicense: async (key) => {
     if (isElectron) return window.electronAPI.activateLicense(key);
+    try {
+      const cleanKey = key.trim();
+      const parts = cleanKey.replace(/^GP-ACT-/, '').split('.');
+      if (parts.length >= 1 && parts[0]) {
+        let b64 = parts[0].replace(/-/g, '+').replace(/_/g, '/');
+        while (b64.length % 4) b64 += '=';
+        const jsonStr = decodeURIComponent(escape(atob(b64)));
+        const payload = JSON.parse(jsonStr);
+        if (payload.storeName) {
+          fallbackStorage.storeProfile.store_name = payload.storeName;
+          fallbackStorage.license.storeName = payload.storeName;
+        }
+        if (payload.plan) fallbackStorage.license.plan = payload.plan;
+        if (payload.days) fallbackStorage.license.daysRemaining = payload.days;
+      }
+    } catch (e) {
+      console.warn('Fallback key parse error:', e);
+    }
     fallbackStorage.license.isValid = true;
-    fallbackStorage.license.daysRemaining = 365;
     fallbackStorage.license.status = 'ACTIVE';
     return fallbackStorage.license;
   },
@@ -276,7 +293,19 @@ export const api = {
 
   applyRenewalCode: async (code) => {
     if (isElectron) return window.electronAPI.applyRenewalCode(code);
-    fallbackStorage.license.daysRemaining += 365;
+    try {
+      const parts = code.trim().replace(/^GP-REN-/, '').split('.');
+      if (parts.length >= 1 && parts[0]) {
+        let b64 = parts[0].replace(/-/g, '+').replace(/_/g, '/');
+        while (b64.length % 4) b64 += '=';
+        const payload = JSON.parse(decodeURIComponent(escape(atob(b64))));
+        fallbackStorage.license.daysRemaining += (payload.daysAdded || 365);
+      } else {
+        fallbackStorage.license.daysRemaining += 365;
+      }
+    } catch (e) {
+      fallbackStorage.license.daysRemaining += 365;
+    }
     fallbackStorage.license.isValid = true;
     fallbackStorage.license.status = 'ACTIVE';
     return fallbackStorage.license;

@@ -5,6 +5,7 @@ import { api } from '../services/api';
 export default function LicenseActivationModal({ licenseStatus, onActivationSuccess, onClose }) {
   const [inputKey, setInputKey] = useState('');
   const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [copiedHwid, setCopiedHwid] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -19,9 +20,19 @@ export default function LicenseActivationModal({ licenseStatus, onActivationSucc
   const handleActivate = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccessMsg('');
     setIsSubmitting(true);
     try {
-      const trimmed = inputKey.trim();
+      let trimmed = inputKey.trim();
+      // Auto-prefix if user copied only the payload
+      if (!trimmed.startsWith('GP-ACT-') && !trimmed.startsWith('GP-REN-')) {
+        if (trimmed.startsWith('eyJ') || trimmed.includes('.webmock') || trimmed.includes('.')) {
+          trimmed = 'GP-ACT-' + trimmed;
+        } else {
+          throw new Error('Incomplete key. Please ensure you copy the entire key from Master Hub.');
+        }
+      }
+
       let updatedStatus;
       if (trimmed.startsWith('GP-REN-')) {
         updatedStatus = await api.applyRenewalCode(trimmed);
@@ -31,7 +42,11 @@ export default function LicenseActivationModal({ licenseStatus, onActivationSucc
         throw new Error('Unrecognized key format. Activation keys start with GP-ACT- or GP-REN-');
       }
 
-      onActivationSuccess(updatedStatus);
+      const storeName = updatedStatus?.storeName || 'Deviya Medical';
+      setSuccessMsg(`✓ License Verified & Activated for "${storeName}"!`);
+      setTimeout(() => {
+        onActivationSuccess(updatedStatus);
+      }, 900);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Activation failed. Please check the license key.');
@@ -125,6 +140,13 @@ export default function LicenseActivationModal({ licenseStatus, onActivationSucc
               <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 shrink-0" />
                 <span>{error}</span>
+              </div>
+            )}
+
+            {successMsg && (
+              <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{successMsg}</span>
               </div>
             )}
 

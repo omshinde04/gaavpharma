@@ -263,18 +263,22 @@ export default function SuperAdminHubModal({ onClose }) {
                   <div className="flex justify-between items-center text-[11px] font-semibold text-purple-900">
                     <span>Generated License Activation Key:</span>
                     <button
+                      type="button"
                       onClick={handleCopyKey}
-                      className="px-2 py-0.5 rounded bg-purple-600 hover:bg-purple-700 text-white text-[10px] flex items-center gap-1"
+                      className={`px-3 py-1 rounded-md font-semibold text-white text-[11px] flex items-center gap-1.5 transition-all shadow-xs ${
+                        copiedKey ? 'bg-emerald-600' : 'bg-purple-600 hover:bg-purple-700'
+                      }`}
                     >
-                      <Copy className="w-3 h-3" />
-                      <span>{copiedKey ? 'Copied!' : 'Copy Key for WhatsApp'}</span>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>{copiedKey ? '✓ Copied Full Key!' : 'Copy Key for WhatsApp'}</span>
                     </button>
                   </div>
                   <textarea
                     readOnly
-                    rows="2"
+                    rows="3"
                     value={generatedKey}
-                    className="w-full p-2 bg-white border border-purple-200 rounded text-[10px] font-mono text-purple-950 resize-none select-all"
+                    onClick={(e) => e.target.select()}
+                    className="w-full p-2.5 bg-white border border-purple-300 rounded-lg text-xs font-mono text-purple-950 resize-none select-all focus:ring-2 focus:ring-purple-500"
                   />
                   <div className="text-[10px] text-purple-700">
                     Send this key to the buyer. When entered on their terminal, it activates <b>{targetStore}</b> offline!
