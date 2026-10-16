@@ -6,7 +6,6 @@ import {
   Trash2,
   AlertCircle,
   Tag,
-  DollarSign,
   User,
   Phone,
   Stethoscope,
@@ -14,11 +13,13 @@ import {
   QrCode,
   Banknote,
   BookMarked,
-  Printer,
-  Sparkles,
   ArrowRight,
+  MapPin,
+  Scissors,
+  Package,
   Layers,
-  ChevronDown
+  RotateCcw,
+  Sparkles
 } from 'lucide-react';
 import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
@@ -52,10 +53,8 @@ export default function BillingCounter() {
   // Global Barcode Scanner Listener & Hotkeys
   useEffect(() => {
     const handleKeyDown = async (e) => {
-      // Don't intercept if modifier keys are held (except Enter)
       if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-      // Hotkeys
       if (e.key === 'F2') {
         e.preventDefault();
         handleNewSale();
@@ -77,7 +76,7 @@ export default function BillingCounter() {
         return;
       }
 
-      // Barcode Scanner detection
+      // Scanner keystroke timing
       const currentTime = Date.now();
       const diff = currentTime - lastKeyTimeRef.current;
       lastKeyTimeRef.current = currentTime;
@@ -110,7 +109,7 @@ export default function BillingCounter() {
     setPaymentMode(modes[nextIdx]);
   };
 
-  // Perform search
+  // Perform live search
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (searchQuery.trim().length > 1) {
@@ -131,7 +130,7 @@ export default function BillingCounter() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Mobile lookup for Khata
+  // Khata balance lookup
   useEffect(() => {
     if (customerMobile.length === 10) {
       api.getKhataCustomers().then((custs) => {
@@ -154,7 +153,7 @@ export default function BillingCounter() {
       if (prod) {
         addItemToCart(prod, false);
       } else {
-        alert(`Barcode not found in inventory: ${barcode}`);
+        alert(`Barcode not found in catalog: ${barcode}`);
       }
     } catch (err) {
       console.error('Barcode error:', err);
@@ -163,7 +162,6 @@ export default function BillingCounter() {
 
   const addItemToCart = (product, isLoose = false) => {
     const batches = product.batches || [];
-    // Auto FIFO: Pick earliest expiring batch
     const activeBatch = batches.length > 0 ? batches[0] : null;
 
     if (!activeBatch) {
@@ -171,7 +169,6 @@ export default function BillingCounter() {
       return;
     }
 
-    // Check if already in cart with same batch and loose state
     const existingIndex = cart.findIndex(
       (item) =>
         item.product_id === product.id &&
@@ -192,6 +189,7 @@ export default function BillingCounter() {
       );
       setCart(updated);
     } else {
+      const initialQty = isLoose ? Math.min(4, stripSize) : 1;
       const newItem = {
         product_id: product.id,
         product_name: product.name,
@@ -205,9 +203,9 @@ export default function BillingCounter() {
         expiry_date: activeBatch.expiry_date,
         all_batches: batches,
         is_loose_tablet: isLoose,
-        qty: isLoose ? Math.min(4, stripSize) : 1,
+        qty: initialQty,
         unit_price: unitPrice,
-        total_price: Number((unitPrice * (isLoose ? Math.min(4, stripSize) : 1)).toFixed(2))
+        total_price: Number((unitPrice * initialQty).toFixed(2))
       };
       setCart([newItem, ...cart]);
     }
@@ -259,9 +257,10 @@ export default function BillingCounter() {
     const item = updated[index];
     const newIsLoose = !item.is_loose_tablet;
     item.is_loose_tablet = newIsLoose;
+    const baseMrp = item.all_batches[0]?.mrp || item.unit_price;
     item.unit_price = newIsLoose
-      ? Math.round(((item.all_batches[0]?.mrp || item.unit_price) / item.strip_size) * 100) / 100
-      : (item.all_batches[0]?.mrp || item.unit_price * item.strip_size);
+      ? Math.round((baseMrp / item.strip_size) * 100) / 100
+      : baseMrp;
     item.total_price = Number((item.qty * item.unit_price).toFixed(2));
     setCart(updated);
   };
@@ -281,18 +280,18 @@ export default function BillingCounter() {
     searchInputRef.current?.focus();
   };
 
-  // Totals
+  // Calculations
   const subtotal = cart.reduce((sum, item) => sum + item.total_price, 0);
   const netPayable = Math.max(0, subtotal - (parseFloat(discount) || 0));
 
   const handleCompleteSale = async () => {
     if (cart.length === 0) {
-      alert('Cannot checkout: Cart is empty!');
+      alert('Cannot checkout: Bill is empty.');
       return;
     }
 
     if (paymentMode === 'khata' && !customerMobile) {
-      alert('Mobile number is required for Khata (Credit) sales!');
+      alert('Customer mobile number is mandatory for Khata credit billing.');
       return;
     }
 
@@ -311,7 +310,7 @@ export default function BillingCounter() {
       setCompletedInvoice(result);
     } catch (err) {
       console.error('Invoice error:', err);
-      alert('Failed to save invoice. Please try again.');
+      alert('Failed to process invoice.');
     }
   };
 
@@ -327,31 +326,30 @@ export default function BillingCounter() {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-50 overflow-hidden select-none">
-      {/* Top Search Bar & Counter Bar */}
-      <div className="p-3.5 bg-white border-b border-slate-200 shadow-sm flex items-center justify-between gap-4">
-        {/* Medicine / FMCG Search Box */}
-        <div className="relative flex-1 max-w-3xl">
+      {/* Top Search & Command Bar */}
+      <div className="p-3 bg-white border-b border-slate-200 shadow-xs flex items-center justify-between gap-4 shrink-0">
+        <div className="relative flex-1 max-w-2xl">
           <div className="relative flex items-center">
-            <Search className="w-5 h-5 absolute left-3.5 text-slate-400" />
+            <Search className="w-4 h-4 absolute left-3.5 text-slate-400" />
             <input
               ref={searchInputRef}
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search Medicine by Name, Salt (e.g. Paracetamol), or Scan Barcode... [F4]"
-              className="w-full pl-11 pr-24 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-900 placeholder-slate-400 font-medium focus:bg-white focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500 transition-all"
+              placeholder="Search medicine, salt, or scan barcode... (F4)"
+              className="w-full pl-10 pr-28 py-2 bg-slate-50 hover:bg-slate-100/60 focus:bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-900 placeholder-slate-400 focus:border-emerald-600 transition-all"
               autoFocus
             />
             <div className="absolute right-2.5 flex items-center space-x-1.5 text-xs text-slate-400 font-mono">
-              <span className="bg-slate-200/80 px-2 py-0.5 rounded text-[11px] font-semibold text-slate-600 flex items-center gap-1">
-                <Barcode className="w-3.5 h-3.5" /> Auto-Scanner
+              <span className="bg-slate-100 text-slate-500 border border-slate-200/80 px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1">
+                <Barcode className="w-3 h-3 text-slate-400" /> Scanner Ready
               </span>
             </div>
           </div>
 
           {/* Instant Search Results Dropdown */}
           {searchResults.length > 0 && (
-            <div className="absolute left-0 right-0 mt-1.5 bg-white rounded-lg shadow-xl border border-slate-200 max-h-96 overflow-y-auto z-40 divide-y divide-slate-100 animate-in fade-in zoom-in-95 duration-100">
+            <div className="absolute left-0 right-0 mt-1.5 bg-white rounded-xl shadow-xl border border-slate-200 max-h-96 overflow-y-auto z-40 divide-y divide-slate-100 animate-in fade-in duration-100">
               {searchResults.map((prod) => {
                 const totalStock = prod.total_stock || 0;
                 const activeBatch = prod.active_batch;
@@ -360,53 +358,57 @@ export default function BillingCounter() {
                 return (
                   <div
                     key={prod.id}
-                    className="p-3 hover:bg-emerald-50/70 transition-colors flex items-center justify-between cursor-pointer group"
+                    className="p-3 hover:bg-slate-50 transition-colors flex items-center justify-between cursor-pointer group"
                     onClick={() => addItemToCart(prod, false)}
                   >
                     <div className="flex-1 pr-3">
                       <div className="flex items-center space-x-2">
-                        <span className="font-bold text-sm text-slate-900 group-hover:text-emerald-800">
+                        <span className="font-semibold text-xs text-slate-900 group-hover:text-emerald-700">
                           {prod.name}
                         </span>
-                        <span className="rack-chip">📍 {prod.rack_location || 'Rack General'}</span>
+                        <span className="rack-chip">
+                          <MapPin className="w-2.5 h-2.5 text-slate-400" />
+                          {prod.rack_location || 'General'}
+                        </span>
                         {prod.is_schedule_h1 ? (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-300">
+                          <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200">
                             Schedule H1
                           </span>
                         ) : null}
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono uppercase">
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-mono uppercase">
                           {prod.category}
                         </span>
                       </div>
 
-                      <div className="text-xs text-slate-500 mt-0.5 flex items-center space-x-3">
-                        {prod.generic_salt && (
-                          <span className="truncate max-w-md font-medium text-slate-600">
-                            {prod.generic_salt}
-                          </span>
-                        )}
-                        {prod.strip_size > 1 && (
-                          <span className="text-slate-400">({prod.strip_size} tabs/strip)</span>
-                        )}
-                      </div>
+                      {prod.generic_salt && (
+                        <div className="text-[11px] text-slate-500 font-normal truncate max-w-md mt-0.5">
+                          {prod.generic_salt}
+                          {prod.strip_size > 1 && (
+                            <span className="text-slate-400 ml-1.5 font-mono">
+                              ({prod.strip_size} tabs/strip)
+                            </span>
+                          )}
+                        </div>
+                      )}
 
                       {activeBatch && (
-                        <div className="text-[11px] text-slate-500 font-mono mt-1 flex items-center space-x-2">
-                          <span>Earliest Batch: <b>{activeBatch.batch_no}</b></span>
-                          <span>•</span>
-                          <span>Exp: <b>{activeBatch.expiry_date}</b></span>
-                          <span>•</span>
-                          <span>MRP: <b>₹{Number(activeBatch.mrp).toFixed(2)}</b></span>
+                        <div className="text-[10px] text-slate-500 font-mono mt-1 flex items-center space-x-2">
+                          <span>Batch: <b className="text-slate-700">{activeBatch.batch_no}</b></span>
+                          <span className="text-slate-300">•</span>
+                          <span>Exp: <b className="text-slate-700">{activeBatch.expiry_date}</b></span>
+                          <span className="text-slate-300">•</span>
+                          <span>MRP: <b className="text-slate-900">₹{Number(activeBatch.mrp).toFixed(2)}</b></span>
+                          <span className="text-slate-300">•</span>
+                          <span>Stock: <b className="text-emerald-700">{totalStock}</b></span>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex items-center space-x-2 shrink-0">
+                    <div className="flex items-center space-x-1.5 shrink-0">
                       {prod.generic_salt && (
                         <button
                           onClick={(e) => viewSubstitutes(prod, e)}
-                          className="px-2.5 py-1 text-xs font-semibold rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors"
-                          title="View other brands with same salt"
+                          className="px-2.5 py-1 text-[11px] font-medium rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors"
                         >
                           Substitutes
                         </button>
@@ -418,23 +420,23 @@ export default function BillingCounter() {
                             e.stopPropagation();
                             addItemToCart(prod, true);
                           }}
-                          className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 transition-colors"
-                          title="Sell loose cut tablets"
+                          className="px-2.5 py-1 text-[11px] font-medium rounded border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100 text-emerald-800 flex items-center gap-1 transition-colors"
                         >
-                          Cut Tabs ✂️
+                          <Scissors className="w-3 h-3 text-emerald-600" />
+                          <span>Cut Tabs</span>
                         </button>
                       )}
 
                       <button
                         disabled={isOutOfStock}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 ${
+                        className={`px-3 py-1 rounded-md text-xs font-semibold flex items-center space-x-1 transition-colors ${
                           isOutOfStock
                             ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                            : 'bg-emerald-700 text-white hover:bg-emerald-800'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
                         }`}
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>{isOutOfStock ? 'No Stock' : 'Add Strip'}</span>
+                        <span>{isOutOfStock ? 'Out of Stock' : 'Add Strip'}</span>
                       </button>
                     </div>
                   </div>
@@ -444,87 +446,91 @@ export default function BillingCounter() {
           )}
         </div>
 
-        {/* Counter Info & Clear Action */}
-        <div className="flex items-center space-x-3 shrink-0">
+        {/* Counter Top Actions */}
+        <div className="flex items-center space-x-2 shrink-0">
           <button
             onClick={handleNewSale}
-            className="flex items-center space-x-1.5 px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs shadow-sm transition-colors"
+            className="flex items-center space-x-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium shadow-xs transition-colors"
           >
+            <RotateCcw className="w-3 h-3 text-slate-400" />
             <span>New Bill (F2)</span>
           </button>
         </div>
       </div>
 
-      {/* Main Billing Workspace (Grid Layout) */}
+      {/* Main Billing Workspace (Data Table + Right Dock) */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Side: High-Density Billing Cart Table */}
+        {/* Left Side: Table of Bill Items */}
         <div className="flex-1 flex flex-col bg-white border-r border-slate-200 overflow-hidden">
-          <div className="bg-slate-100/80 px-4 py-2 border-b border-slate-200 flex items-center justify-between text-xs font-bold text-slate-600">
+          <div className="bg-slate-50/80 px-4 py-2 border-b border-slate-200/80 flex items-center justify-between text-xs font-medium text-slate-500">
             <div className="flex items-center space-x-2">
-              <span>ITEMS IN BILL</span>
-              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full text-[11px] font-mono">
+              <span className="font-semibold text-slate-700 tracking-wide">BILL ITEMS</span>
+              <span className="bg-slate-200/80 text-slate-700 px-2 py-0.2 rounded-full text-[11px] font-mono">
                 {cart.length} {cart.length === 1 ? 'item' : 'items'}
               </span>
             </div>
-            <span className="text-[11px] text-slate-500 font-normal">
-              Compact View • 15+ items counter ready
+            <span className="text-[11px] text-slate-400">
+              High density counter mode
             </span>
           </div>
 
           {/* Table Container */}
           <div className="flex-1 overflow-y-auto">
             {cart.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 space-y-3">
-                <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-300">
-                  <Barcode className="w-8 h-8" />
+              <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 space-y-2">
+                <div className="w-12 h-12 rounded-xl bg-slate-100/80 flex items-center justify-center text-slate-400">
+                  <Barcode className="w-6 h-6" />
                 </div>
                 <div className="text-center">
-                  <div className="text-sm font-bold text-slate-600">Billing Counter Ready</div>
-                  <div className="text-xs text-slate-400 max-w-sm mt-1">
-                    Scan any product barcode with your USB scanner or type medicine name / salt above to start billing.
+                  <div className="text-xs font-semibold text-slate-700">Billing Counter Ready</div>
+                  <div className="text-[11px] text-slate-400 max-w-xs mt-0.5">
+                    Scan any product barcode or type medicine name above to populate bill.
                   </div>
                 </div>
               </div>
             ) : (
               <table className="w-full border-collapse text-left text-xs">
                 <thead>
-                  <tr className="bg-slate-50/90 text-slate-500 uppercase tracking-wider text-[11px] border-b border-slate-200 sticky top-0 z-10 font-bold">
+                  <tr className="bg-slate-50/70 text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 font-semibold sticky top-0 z-10">
                     <th className="py-2 px-3 w-8 text-center">#</th>
                     <th className="py-2 px-3 min-w-[200px]">Product & Salt</th>
                     <th className="py-2 px-3 w-28">Rack</th>
                     <th className="py-2 px-3 w-32">Batch (FIFO)</th>
-                    <th className="py-2 px-3 w-24">Type</th>
-                    <th className="py-2 px-3 w-28 text-center">Qty</th>
+                    <th className="py-2 px-3 w-28">Unit Mode</th>
+                    <th className="py-2 px-3 w-28 text-center">Quantity</th>
                     <th className="py-2 px-3 w-24 text-right">Unit Rate</th>
-                    <th className="py-2 px-3 w-28 text-right">Total (₹)</th>
-                    <th className="py-2 px-3 w-10 text-center"></th>
+                    <th className="py-2 px-3 w-28 text-right">Amount (₹)</th>
+                    <th className="py-2 px-3 w-8 text-center"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 font-mono">
+                <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
                   {cart.map((item, idx) => (
                     <tr
                       key={`${item.product_id}-${item.batch_id}-${item.is_loose_tablet}`}
-                      className="hover:bg-emerald-50/50 transition-colors py-2 px-3"
+                      className="hover:bg-slate-50/70 transition-colors"
                     >
-                      <td className="py-2 px-3 text-center text-slate-400 text-[11px]">{idx + 1}</td>
+                      <td className="py-2 px-3 text-center text-slate-400 text-[10px]">{idx + 1}</td>
                       <td className="py-2 px-3 font-sans">
-                        <div className="font-bold text-slate-900 leading-tight">
+                        <div className="font-semibold text-slate-900 leading-tight">
                           {item.product_name}
                         </div>
                         {item.generic_salt && (
-                          <div className="text-[11px] text-slate-500 truncate max-w-xs font-normal">
+                          <div className="text-[10px] text-slate-500 truncate max-w-xs font-normal mt-0.5">
                             {item.generic_salt}
                           </div>
                         )}
                       </td>
                       <td className="py-2 px-3 font-sans">
-                        <span className="rack-chip">📍 {item.rack_location || 'General'}</span>
+                        <span className="rack-chip">
+                          <MapPin className="w-2.5 h-2.5 text-slate-400" />
+                          {item.rack_location || 'General'}
+                        </span>
                       </td>
                       <td className="py-2 px-3">
                         <select
                           value={item.batch_id}
                           onChange={(e) => switchBatch(idx, e.target.value)}
-                          className="bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-[11px] font-mono text-slate-800 focus:ring-1 focus:ring-emerald-500"
+                          className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-mono text-slate-800 focus:border-emerald-600"
                         >
                           {item.all_batches.map((b) => (
                             <option key={b.id} value={b.id}>
@@ -537,13 +543,23 @@ export default function BillingCounter() {
                         {item.strip_size > 1 ? (
                           <button
                             onClick={() => toggleLooseTabletMode(idx)}
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-colors ${
+                            className={`text-[10px] font-medium px-2 py-0.5 rounded border transition-colors inline-flex items-center gap-1 ${
                               item.is_loose_tablet
-                                ? 'bg-amber-100 text-amber-800 border-amber-300'
-                                : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
                             }`}
                           >
-                            {item.is_loose_tablet ? '✂️ Loose Tabs' : '📦 Full Strip'}
+                            {item.is_loose_tablet ? (
+                              <>
+                                <Scissors className="w-2.5 h-2.5 text-amber-600" />
+                                <span>Loose Tabs</span>
+                              </>
+                            ) : (
+                              <>
+                                <Package className="w-2.5 h-2.5 text-emerald-600" />
+                                <span>Full Strip</span>
+                              </>
+                            )}
                           </button>
                         ) : (
                           <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
@@ -552,10 +568,10 @@ export default function BillingCounter() {
                         )}
                       </td>
                       <td className="py-2 px-3 text-center">
-                        <div className="inline-flex items-center border border-slate-300 rounded bg-white">
+                        <div className="inline-flex items-center border border-slate-200 rounded bg-white shadow-2xs">
                           <button
                             onClick={() => updateCartItemQty(idx, -1)}
-                            className="px-2 py-0.5 text-slate-600 hover:bg-slate-100 text-xs font-bold"
+                            className="px-2 py-0.5 text-slate-600 hover:bg-slate-100 text-xs font-semibold"
                           >
                             -
                           </button>
@@ -564,29 +580,29 @@ export default function BillingCounter() {
                             min="1"
                             value={item.qty}
                             onChange={(e) => setCartItemDirectQty(idx, e.target.value)}
-                            className="w-12 text-center text-xs font-bold text-slate-900 focus:outline-none"
+                            className="w-10 text-center text-xs font-semibold text-slate-900 focus:outline-none"
                           />
                           <button
                             onClick={() => updateCartItemQty(idx, 1)}
-                            className="px-2 py-0.5 text-slate-600 hover:bg-slate-100 text-xs font-bold"
+                            className="px-2 py-0.5 text-slate-600 hover:bg-slate-100 text-xs font-semibold"
                           >
                             +
                           </button>
                         </div>
                       </td>
-                      <td className="py-2 px-3 text-right text-slate-700">
+                      <td className="py-2 px-3 text-right text-slate-600">
                         ₹{Number(item.unit_price).toFixed(2)}
                       </td>
-                      <td className="py-2 px-3 text-right font-bold text-slate-950 text-sm">
+                      <td className="py-2 px-3 text-right font-semibold text-slate-900">
                         ₹{Number(item.total_price).toFixed(2)}
                       </td>
                       <td className="py-2 px-3 text-center">
                         <button
                           onClick={() => removeCartItem(idx)}
-                          className="text-slate-400 hover:text-red-600 p-1 rounded hover:bg-red-50 transition-colors"
+                          className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors"
                           title="Remove item"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </td>
                     </tr>
@@ -597,73 +613,82 @@ export default function BillingCounter() {
           </div>
         </div>
 
-        {/* Right Side: Counter Checkout, Billboard Total Box & Customer Info */}
-        <div className="w-96 bg-slate-50 p-4 flex flex-col justify-between overflow-y-auto shrink-0 border-l border-slate-200 space-y-4">
-          <div className="space-y-4">
-            {/* Customer & Doctor Input Card */}
-            <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm space-y-3">
-              <div className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center justify-between">
+        {/* Right Side: Modern SaaS Checkout Dock */}
+        <div className="w-80 bg-slate-50 p-3.5 flex flex-col justify-between overflow-y-auto shrink-0 border-l border-slate-200 space-y-3">
+          <div className="space-y-3">
+            {/* Customer & Prescription Details */}
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs space-y-2.5">
+              <div className="text-[11px] font-semibold text-slate-700 uppercase tracking-wide flex items-center justify-between">
                 <span>Customer & Doctor</span>
                 {existingKhataBalance !== null && (
-                  <span className="text-[11px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200 font-mono">
-                    Khata: ₹{existingKhataBalance.toFixed(2)}
+                  <span className="text-[10px] font-mono font-medium text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                    Khata Due: ₹{existingKhataBalance.toFixed(2)}
                   </span>
                 )}
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-slate-500 mb-1 flex items-center gap-1">
-                  <Phone className="w-3 h-3 text-emerald-600" /> Customer Mobile (10 Digits)
+                <label className="text-[10px] font-medium text-slate-500 mb-0.5 block">
+                  Customer Mobile Number
                 </label>
-                <input
-                  type="tel"
-                  maxLength="10"
-                  value={customerMobile}
-                  onChange={(e) => setCustomerMobile(e.target.value.replace(/\D/g, ''))}
-                  placeholder="e.g. 9822114477"
-                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-medium focus:bg-white focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500 transition-all"
-                />
+                <div className="relative flex items-center">
+                  <Phone className="w-3 h-3 absolute left-2.5 text-slate-400" />
+                  <input
+                    type="tel"
+                    maxLength="10"
+                    value={customerMobile}
+                    onChange={(e) => setCustomerMobile(e.target.value.replace(/\D/g, ''))}
+                    placeholder="10-digit mobile..."
+                    className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:bg-white transition-all"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-slate-500 mb-1 flex items-center gap-1">
-                  <User className="w-3 h-3 text-emerald-600" /> Customer Name
+                <label className="text-[10px] font-medium text-slate-500 mb-0.5 block">
+                  Customer Name
                 </label>
-                <input
-                  type="text"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Cash Customer"
-                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:bg-white focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500 transition-all"
-                />
+                <div className="relative flex items-center">
+                  <User className="w-3 h-3 absolute left-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    placeholder="Cash Customer"
+                    className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-medium focus:bg-white transition-all"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-slate-500 mb-1 flex items-center gap-1">
-                  <Stethoscope className="w-3 h-3 text-emerald-600" /> Prescribing Doctor
+                <label className="text-[10px] font-medium text-slate-500 mb-0.5 block">
+                  Prescribing Doctor (Optional)
                 </label>
-                <input
-                  type="text"
-                  value={doctorName}
-                  onChange={(e) => setDoctorName(e.target.value)}
-                  placeholder="e.g. Dr. Joshi"
-                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:bg-white focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500 transition-all"
-                />
+                <div className="relative flex items-center">
+                  <Stethoscope className="w-3 h-3 absolute left-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={doctorName}
+                    onChange={(e) => setDoctorName(e.target.value)}
+                    placeholder="e.g. Dr. Joshi"
+                    className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-medium focus:bg-white transition-all"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Payment Mode Selector */}
-            <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-700 uppercase tracking-wider">
+            {/* Segmented Payment Mode Selector */}
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs space-y-2">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 uppercase tracking-wide">
                 <span>Payment Mode</span>
-                <span className="text-[10px] text-slate-400 font-mono">Press F8 to cycle</span>
+                <span className="text-[10px] text-slate-400 font-mono">F8</span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-1.5">
                 {[
                   { id: 'cash', label: 'Cash', icon: Banknote },
                   { id: 'upi', label: 'UPI / QR', icon: QrCode },
-                  { id: 'khata', label: 'Khata (Credit)', icon: BookMarked },
+                  { id: 'khata', label: 'Khata Credit', icon: BookMarked },
                   { id: 'card', label: 'Card / POS', icon: CreditCard }
                 ].map((mode) => {
                   const Icon = mode.icon;
@@ -672,13 +697,13 @@ export default function BillingCounter() {
                     <button
                       key={mode.id}
                       onClick={() => setPaymentMode(mode.id)}
-                      className={`flex items-center space-x-2 p-2.5 rounded-lg border text-xs font-bold transition-all ${
+                      className={`flex items-center space-x-1.5 p-2 rounded-lg border text-xs font-medium transition-all ${
                         isSelected
-                          ? 'bg-emerald-800 text-white border-emerald-900 shadow-sm'
-                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900'
                       }`}
                     >
-                      <Icon className="w-4 h-4" />
+                      <Icon className="w-3.5 h-3.5" />
                       <span>{mode.label}</span>
                     </button>
                   );
@@ -686,77 +711,75 @@ export default function BillingCounter() {
               </div>
             </div>
 
-            {/* Discount / Deductions */}
-            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-600">Discount (₹):</span>
+            {/* Discount */}
+            <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between text-xs">
+              <span className="font-medium text-slate-600">Bill Discount (₹):</span>
               <input
                 type="number"
                 min="0"
                 value={discount}
                 onChange={(e) => setDiscount(e.target.value)}
-                className="w-24 text-right px-2 py-1 bg-slate-50 border border-slate-300 rounded font-mono font-bold text-xs focus:bg-white focus:ring-2 focus:ring-emerald-500"
+                className="w-20 text-right px-2 py-1 bg-slate-50 border border-slate-200 rounded font-mono font-medium text-xs focus:bg-white"
               />
             </div>
           </div>
 
-          {/* BILLBOARD TOTAL BOX */}
-          <div className="space-y-3">
-            <div className="bg-slate-900 text-white p-4 rounded-xl shadow-lg border border-slate-800 space-y-2">
-              <div className="flex justify-between text-xs text-slate-400 font-mono">
+          {/* BILLBOARD TOTAL BOX & PRIMARY ACTION */}
+          <div className="space-y-2.5">
+            <div className="bg-slate-900 text-white p-3.5 rounded-xl shadow-md border border-slate-800 space-y-1.5">
+              <div className="flex justify-between text-[11px] text-slate-400 font-mono">
                 <span>Subtotal ({cart.length} items):</span>
                 <span>₹{subtotal.toFixed(2)}</span>
               </div>
               {discount > 0 && (
-                <div className="flex justify-between text-xs text-emerald-400 font-mono">
+                <div className="flex justify-between text-[11px] text-emerald-400 font-mono">
                   <span>Discount:</span>
                   <span>-₹{Number(discount).toFixed(2)}</span>
                 </div>
               )}
 
-              {/* Billboard Payable Amount */}
               <div className="pt-2 border-t border-slate-800">
-                <div className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-                  Net Payable Amount
+                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                  Net Amount Due
                 </div>
-                <div className="text-3xl font-extrabold text-emerald-400 font-mono tracking-tight mt-0.5">
+                <div className="text-2xl font-extrabold text-emerald-400 font-mono tracking-tight mt-0.5">
                   ₹ {netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                 </div>
               </div>
             </div>
 
-            {/* Complete Sale Action Button */}
             <button
               onClick={handleCompleteSale}
               disabled={cart.length === 0}
-              className={`w-full py-3.5 px-4 rounded-xl font-extrabold text-sm flex items-center justify-center space-x-2 shadow-md transition-all ${
+              className={`w-full py-3 px-4 rounded-xl font-semibold text-xs flex items-center justify-center space-x-2 transition-all ${
                 cart.length === 0
-                  ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                  : 'bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white shadow-emerald-900/30'
+                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white shadow-sm'
               }`}
             >
-              <span>⚡ Complete & Print Bill (F9)</span>
-              <ArrowRight className="w-4 h-4" />
+              <span>Complete Sale & Print (F9)</span>
+              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
       </div>
 
-      {/* Salt Substitutes Modal */}
+      {/* Substitutes Modal */}
       {substitutesModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg p-5 space-y-4">
-            <div className="flex justify-between items-start">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg p-5 space-y-3 animate-in fade-in zoom-in-95">
+            <div className="flex justify-between items-start border-b pb-2.5">
               <div>
-                <h3 className="font-bold text-base text-slate-900">
-                  Salt Substitutes for {substitutesModal.original.name}
+                <h3 className="font-semibold text-sm text-slate-900">
+                  Salt Substitutes: {substitutesModal.original.name}
                 </h3>
-                <p className="text-xs text-slate-500 font-mono mt-0.5">
+                <p className="text-[11px] text-slate-500 font-mono mt-0.5">
                   Composition: {substitutesModal.original.generic_salt}
                 </p>
               </div>
               <button
                 onClick={() => setSubstitutesModal(null)}
-                className="text-slate-400 hover:text-slate-700 text-sm font-bold"
+                className="text-slate-400 hover:text-slate-700 text-sm font-semibold"
               >
                 ✕
               </button>
@@ -764,21 +787,24 @@ export default function BillingCounter() {
 
             <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
               {substitutesModal.substitutes.length === 0 ? (
-                <div className="py-6 text-center text-xs text-slate-400">
-                  No other medicines found in stock with the exact same composition.
+                <div className="py-8 text-center text-xs text-slate-400">
+                  No other medicines found with this exact salt composition.
                 </div>
               ) : (
                 substitutesModal.substitutes.map((sub) => (
                   <div
                     key={sub.id}
-                    className="py-3 flex items-center justify-between hover:bg-slate-50 px-2 rounded"
+                    className="py-2.5 flex items-center justify-between hover:bg-slate-50 px-2 rounded-md"
                   >
                     <div>
-                      <div className="font-bold text-sm text-slate-900">{sub.name}</div>
-                      <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                        <span className="rack-chip">📍 {sub.rack_location}</span>
-                        <span className="font-mono text-emerald-700 font-semibold">
-                          Stock: {sub.total_stock}
+                      <div className="font-semibold text-xs text-slate-900">{sub.name}</div>
+                      <div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5">
+                        <span className="rack-chip">
+                          <MapPin className="w-2.5 h-2.5 text-slate-400" />
+                          {sub.rack_location}
+                        </span>
+                        <span className="font-mono text-emerald-700 font-medium">
+                          In Stock: {sub.total_stock}
                         </span>
                       </div>
                     </div>
@@ -787,9 +813,9 @@ export default function BillingCounter() {
                         addItemToCart(sub, false);
                         setSubstitutesModal(null);
                       }}
-                      className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-xs font-bold"
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-medium"
                     >
-                      Add This Brand
+                      Select Brand
                     </button>
                   </div>
                 ))
@@ -799,9 +825,9 @@ export default function BillingCounter() {
             <div className="text-right pt-2 border-t border-slate-100">
               <button
                 onClick={() => setSubstitutesModal(null)}
-                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-xs font-semibold"
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-medium"
               >
-                Close
+                Dismiss
               </button>
             </div>
           </div>
