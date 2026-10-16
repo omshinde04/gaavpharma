@@ -13,8 +13,6 @@ import {
   FileText,
   MapPin,
   QrCode,
-  ToggleLeft,
-  ToggleRight,
   Sparkles
 } from 'lucide-react';
 import { api } from '../services/api';
@@ -85,14 +83,18 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
     }
   };
 
-  const handleToggleChange = async (key, val) => {
-    try {
-      const updated = await api.updateFeatureToggle(key, val);
-      setToggles(updated);
-      if (onTogglesUpdated) onTogglesUpdated(updated);
-    } catch (err) {
-      console.error(err);
-    }
+  const handleToggleChange = (key, val) => {
+    // Instant 0ms UI update
+    const updated = { ...toggles, [key]: val };
+    setToggles(updated);
+    if (onTogglesUpdated) onTogglesUpdated(updated);
+
+    // Save in background
+    api.updateFeatureToggle(key, val).catch((err) => {
+      console.error('Failed to update toggle:', err);
+      setToggles(toggles);
+      if (onTogglesUpdated) onTogglesUpdated(toggles);
+    });
   };
 
   const handleCreateUser = async (e) => {
@@ -112,14 +114,18 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
     }
   };
 
-  const handleToggleUserStatus = async (user) => {
-    try {
-      await api.updateUser(user.id, { is_active: !user.is_active });
-      const u = await api.getUsers();
-      setUsers(u);
-    } catch (err) {
+  const handleToggleUserStatus = (user) => {
+    const nextStatus = user.is_active ? 0 : 1;
+    setUsers((prev) =>
+      prev.map((u) => (u.id === user.id ? { ...u, is_active: nextStatus } : u))
+    );
+
+    api.updateUser(user.id, { is_active: nextStatus }).catch((err) => {
       console.error(err);
-    }
+      setUsers((prev) =>
+        prev.map((u) => (u.id === user.id ? { ...u, is_active: user.is_active } : u))
+      );
+    });
   };
 
   return (
@@ -304,93 +310,113 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
 
               <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
                 {/* Khata Toggle */}
-                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
-                  <div>
+                <div
+                  onClick={() => handleToggleChange('allow_khata', !toggles.allow_khata)}
+                  className="p-3.5 flex items-center justify-between hover:bg-white cursor-pointer transition-colors"
+                >
+                  <div className="pr-4">
                     <div className="font-semibold text-slate-900">Khata (Family Credit Billing)</div>
                     <div className="text-[10px] text-slate-500">Allow customers to purchase on udhaari credit</div>
                   </div>
-                  <button
-                    onClick={() => handleToggleChange('allow_khata', !toggles.allow_khata)}
-                    className="text-2xl"
+                  <div
+                    className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-150 ease-in-out shrink-0 ${
+                      toggles.allow_khata ? 'bg-emerald-600' : 'bg-slate-300'
+                    }`}
                   >
-                    {toggles.allow_khata ? (
-                      <ToggleRight className="w-8 h-8 text-emerald-600" />
-                    ) : (
-                      <ToggleLeft className="w-8 h-8 text-slate-300" />
-                    )}
-                  </button>
+                    <div
+                      className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-150 ease-in-out ${
+                        toggles.allow_khata ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </div>
                 </div>
 
                 {/* Loose Tablet Math Toggle */}
-                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
-                  <div>
+                <div
+                  onClick={() => handleToggleChange('allow_loose_tablets', !toggles.allow_loose_tablets)}
+                  className="p-3.5 flex items-center justify-between hover:bg-white cursor-pointer transition-colors"
+                >
+                  <div className="pr-4">
                     <div className="font-semibold text-slate-900">Loose Cut Tablet Dispensing</div>
                     <div className="text-[10px] text-slate-500">Allow selling fractional tablets out of strips (e.g. 4 tablets out of 10)</div>
                   </div>
-                  <button
-                    onClick={() => handleToggleChange('allow_loose_tablets', !toggles.allow_loose_tablets)}
-                    className="text-2xl"
+                  <div
+                    className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-150 ease-in-out shrink-0 ${
+                      toggles.allow_loose_tablets ? 'bg-emerald-600' : 'bg-slate-300'
+                    }`}
                   >
-                    {toggles.allow_loose_tablets ? (
-                      <ToggleRight className="w-8 h-8 text-emerald-600" />
-                    ) : (
-                      <ToggleLeft className="w-8 h-8 text-slate-300" />
-                    )}
-                  </button>
+                    <div
+                      className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-150 ease-in-out ${
+                        toggles.allow_loose_tablets ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </div>
                 </div>
 
                 {/* WhatsApp Receipts Toggle */}
-                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
-                  <div>
+                <div
+                  onClick={() => handleToggleChange('allow_whatsapp', !toggles.allow_whatsapp)}
+                  className="p-3.5 flex items-center justify-between hover:bg-white cursor-pointer transition-colors"
+                >
+                  <div className="pr-4">
                     <div className="font-semibold text-slate-900">1-Click WhatsApp Invoicing</div>
                     <div className="text-[10px] text-slate-500">Generate formatted wa.me payment links for customers</div>
                   </div>
-                  <button
-                    onClick={() => handleToggleChange('allow_whatsapp', !toggles.allow_whatsapp)}
-                    className="text-2xl"
+                  <div
+                    className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-150 ease-in-out shrink-0 ${
+                      toggles.allow_whatsapp ? 'bg-emerald-600' : 'bg-slate-300'
+                    }`}
                   >
-                    {toggles.allow_whatsapp ? (
-                      <ToggleRight className="w-8 h-8 text-emerald-600" />
-                    ) : (
-                      <ToggleLeft className="w-8 h-8 text-slate-300" />
-                    )}
-                  </button>
+                    <div
+                      className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-150 ease-in-out ${
+                        toggles.allow_whatsapp ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </div>
                 </div>
 
                 {/* Schedule H1 Doctor Enforcement */}
-                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
-                  <div>
+                <div
+                  onClick={() => handleToggleChange('enforce_h1_doctor', !toggles.enforce_h1_doctor)}
+                  className="p-3.5 flex items-center justify-between hover:bg-white cursor-pointer transition-colors"
+                >
+                  <div className="pr-4">
                     <div className="font-semibold text-slate-900">Enforce Doctor Name for Schedule H1</div>
                     <div className="text-[10px] text-slate-500">Block bill completion if antibiotic has no prescribing doctor entered</div>
                   </div>
-                  <button
-                    onClick={() => handleToggleChange('enforce_h1_doctor', !toggles.enforce_h1_doctor)}
-                    className="text-2xl"
+                  <div
+                    className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-150 ease-in-out shrink-0 ${
+                      toggles.enforce_h1_doctor ? 'bg-emerald-600' : 'bg-slate-300'
+                    }`}
                   >
-                    {toggles.enforce_h1_doctor ? (
-                      <ToggleRight className="w-8 h-8 text-emerald-600" />
-                    ) : (
-                      <ToggleLeft className="w-8 h-8 text-slate-300" />
-                    )}
-                  </button>
+                    <div
+                      className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-150 ease-in-out ${
+                        toggles.enforce_h1_doctor ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </div>
                 </div>
 
                 {/* Hide Financial Drawer from Cashiers */}
-                <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
-                  <div>
+                <div
+                  onClick={() => handleToggleChange('hide_drawer_from_cashier', !toggles.hide_drawer_from_cashier)}
+                  className="p-3.5 flex items-center justify-between hover:bg-white cursor-pointer transition-colors"
+                >
+                  <div className="pr-4">
                     <div className="font-semibold text-slate-900">Hide Financial Register from Cashiers</div>
                     <div className="text-[10px] text-slate-500">Cashiers cannot see today's total store revenue or gross drawer cash</div>
                   </div>
-                  <button
-                    onClick={() => handleToggleChange('hide_drawer_from_cashier', !toggles.hide_drawer_from_cashier)}
-                    className="text-2xl"
+                  <div
+                    className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-150 ease-in-out shrink-0 ${
+                      toggles.hide_drawer_from_cashier ? 'bg-emerald-600' : 'bg-slate-300'
+                    }`}
                   >
-                    {toggles.hide_drawer_from_cashier ? (
-                      <ToggleRight className="w-8 h-8 text-emerald-600" />
-                    ) : (
-                      <ToggleLeft className="w-8 h-8 text-slate-300" />
-                    )}
-                  </button>
+                    <div
+                      className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-150 ease-in-out ${
+                        toggles.hide_drawer_from_cashier ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </div>
                 </div>
 
                 {/* Maximum Cashier Discount */}
