@@ -103,6 +103,7 @@ function setupIpcHandlers() {
   ipcMain.handle('db:getInvoices', (_, limit) => db.getInvoices(limit));
   ipcMain.handle('db:getInvoiceDetails', (_, invoiceId) => db.getInvoiceDetails(invoiceId));
   ipcMain.handle('db:getDailyRegisterSummary', () => db.getDailyRegisterSummary());
+  ipcMain.handle('db:clearAllRecords', () => db.clearAllRecords());
 
   // Khata & Customers
   ipcMain.handle('db:getKhataCustomers', () => db.getKhataCustomers());

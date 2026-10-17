@@ -17,7 +17,8 @@ import {
   Calendar,
   Users,
   Lock,
-  Shield
+  Shield,
+  Trash2
 } from 'lucide-react';
 import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
@@ -168,6 +169,22 @@ export default function DailyRegisterKhata({ currentUser, featureToggles, storeP
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Refresh</span>
           </button>
+
+          {!isCashier && (invoices.length > 0 || customers.length > 0) && (
+            <button
+              onClick={async () => {
+                if (confirm('Delete all recorded bills and reset the register & khata balances to zero?')) {
+                  await api.clearAllRecords();
+                  await loadData();
+                }
+              }}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-medium transition-colors"
+              title="Wipe test invoices and reset register"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>Clear Records</span>
+            </button>
+          )}
 
           {subTab === 'khata' && (
             <button

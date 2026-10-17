@@ -100,23 +100,93 @@ async function runTestSuite() {
   assert(superAdminStillExists, 'Super Admin CANNOT be deleted (protected from store-level deletion)');
 
   // 6. Billing, Invoices & Receipt Modal Details Test
-  console.log('\n💊 [TEST GROUP 6] POS Billing, Invoices & Receipt Modal');
+  console.log('\n💊 [TEST GROUP 6] Clean Database & POS Billing Lifecycle');
+  
+  // Verify clean database state (no dummy records)
+  const initialInvoices = await api.getInvoices();
+  assert(Array.isArray(initialInvoices) && initialInvoices.length === 0, 'Database starts completely clean with 0 invoices');
+
+  const initialCustomers = await api.getKhataCustomers();
+  assert(Array.isArray(initialCustomers) && initialCustomers.length === 0, 'Database starts completely clean with 0 khata debt');
+
+  // Search product and check active batch
   const searchResults = await api.searchProducts('Dolo');
   assert(searchResults.length > 0 && searchResults[0].name.includes('Dolo'), 'Fast product search returns Dolo 650');
   assert(searchResults[0].active_batch !== null, 'Active batch attached with expiry date and MRP');
+  const doloStockBefore = searchResults[0].total_stock;
 
+  // Create Cash Sale Invoice
+  const cashInvoice = await api.createInvoice({
+    customer_name: 'Ganesh Kulkarni',
+    customer_mobile: '9822345678',
+    doctor_name: 'Dr. Joshi',
+    payment_mode: 'cash',
+    total_amount: 68.00,
+    discount: 0,
+    final_amount: 68.00
+  }, [
+    { id: 1, name: 'Dolo 650 Tablet', batch_no: 'DL3811', expiry_date: '10/26', qty: 2, unit_price: 34.00, total_price: 68.00, is_loose_tablet: 0 }
+  ]);
+  assert(cashInvoice && cashInvoice.invoice_no.startsWith('INV-'), 'Cash invoice created successfully');
+
+  // Verify stock was deducted
+  const searchAfterBill = await api.searchProducts('Dolo');
+  assert(searchAfterBill[0].total_stock === doloStockBefore - 2, 'Inventory stock automatically deducted upon bill creation');
+
+  // Create Khata (Credit) Sale Invoice
+  const khataInvoice = await api.createInvoice({
+    customer_name: 'Ramesh Patil (Grampanchayat)',
+    customer_mobile: '9822114477',
+    doctor_name: 'Dr. Patil',
+    payment_mode: 'khata',
+    total_amount: 150.00,
+    discount: 0,
+    final_amount: 150.00
+  }, [
+    { id: 3, name: 'Telma 40 Tablet', batch_no: 'TL4002', expiry_date: '11/26', qty: 1, unit_price: 150.00, total_price: 150.00, is_loose_tablet: 0 }
+  ]);
+  assert(khataInvoice && khataInvoice.payment_mode === 'khata', 'Khata invoice created successfully');
+
+  // Verify Khata customer automatically created and ledger updated
+  const khataCustomers = await api.getKhataCustomers();
+  assert(khataCustomers.length === 1 && khataCustomers[0].name.includes('Ramesh Patil'), 'Khata customer automatically created with debit');
+  assert(khataCustomers[0].balance === 150.00, 'Customer balance accurately reflects credit purchase of ₹150');
+
+  // Test Customer Ledger
+  const ledger = await api.getKhataCustomerLedger(khataCustomers[0].id);
+  assert(ledger && ledger.transactions.length >= 1, 'Customer ledger tracks purchase history and invoice number');
+
+  // Test Khata Payment Settlement
+  await api.addKhataPayment(khataCustomers[0].id, 50.00, 'Counter cash partial payment');
+  const khataAfterPay = await api.getKhataCustomers();
+  assert(khataAfterPay[0].balance === 100.00, 'Khata payment deducted correctly (₹150 - ₹50 = ₹100)');
+
+  // Verify Daily Register Summary
+  const summary = await api.getDailyRegisterSummary();
+  assert(summary.today.total_sales === 218.00, 'Daily Register Gross Sales is accurate (₹68 cash + ₹150 khata = ₹218)');
+  assert(summary.today.cash_total === 68.00, 'Cash drawer accurately records ₹68 cash');
+  assert(summary.khataPending.total_khata_pending === 100.00, 'Total Khata outstanding accurately reports ₹100 due');
+
+  // Test Invoice Details & Receipt Modal View
+  const invoiceDetails = await api.getInvoiceDetails(cashInvoice.id);
+  assert(invoiceDetails !== null, 'getInvoiceDetails returns invoice details for ReceiptModal');
+  assert(Array.isArray(invoiceDetails.items) && invoiceDetails.items.length === 1, 'Invoice details contains populated line items');
+
+  // Test Expiry Radar
   const expiryData = await api.getExpiryRadarData();
   assert(expiryData && expiryData.batches && expiryData.batches.length > 0, 'Expiry Radar tracks all medicine batches and calculates PTR loss');
 
-  const invoiceList = await api.getInvoices();
-  assert(Array.isArray(invoiceList) && invoiceList.length > 0, 'getInvoices returns active invoice list');
+  // Test Database Reset / Clear All Records
+  await api.clearAllRecords();
+  const resetInvoices = await api.getInvoices();
+  const resetCustomers = await api.getKhataCustomers();
+  const resetSummary = await api.getDailyRegisterSummary();
+  assert(resetInvoices.length === 0, 'clearAllRecords wipes all invoices from storage');
+  assert(resetCustomers.length === 0, 'clearAllRecords wipes all khata accounts from storage');
+  assert(resetSummary.today.total_sales === 0, 'Daily register sales resets to ₹0 after clear');
 
-  const invoiceDetails = await api.getInvoiceDetails(invoiceList[0].id);
-  assert(invoiceDetails !== null, 'getInvoiceDetails returns invoice details successfully');
-  assert(Array.isArray(invoiceDetails.items) && invoiceDetails.items.length > 0, 'Invoice details contains populated items array for ReceiptModal');
-
-  // 6. Provider Hub Licensing Engine Test
-  console.log('\n👑 [TEST GROUP 6] Super Admin SaaS Licensing Engine');
+  // 7. Provider Hub Licensing Engine Test
+  console.log('\n👑 [TEST GROUP 7] Super Admin SaaS Licensing Engine');
   const generatedKey = await api.generateLicenseKey({
     storeName: 'Mauli Medical Stores',
     plan: 'annual',

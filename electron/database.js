@@ -472,45 +472,9 @@ function seedInitialData() {
       INSERT INTO distributors (name, phone, gstin, pending_balance)
       VALUES (?, ?, ?, ?)
     `);
-    insertDistributor.run('Mahaveer Pharma Distributors', '9822012345', '27AABCM1234P1Z2', 14250.00);
-    insertDistributor.run('Sunlife Healthcare Agency', '9423098765', '27AABCS9876Q1Z8', 8600.00);
-    insertDistributor.run('Balaji FMCG & Surgicals', '9860011223', '27AABCB4321R1Z5', 3100.00);
-
-    const insertKhata = db.prepare(`
-      INSERT INTO customers_khata (name, mobile, balance)
-      VALUES (?, ?, ?)
-    `);
-    const c1 = insertKhata.run('Ramesh Patil (Grampanchayat)', '9822114477', 1450.00).lastInsertRowid;
-    const c2 = insertKhata.run('Sanjay Deshmukh (Teacher)', '9422336699', 680.00).lastInsertRowid;
-    insertKhata.run('Sunita Kadam (Asha Worker)', '9158442200', 250.00);
-    insertKhata.run('Vitthal Shinde (Krushi Seva)', '9890123456', 0.00);
-
-    const insertKhataTx = db.prepare(`
-      INSERT INTO khata_transactions (customer_id, invoice_id, type, amount, note, created_at)
-      VALUES (?, ?, ?, ?, ?, datetime('now', '-2 days'))
-    `);
-    insertKhataTx.run(c1, null, 'DEBIT', 1450.00, 'Monthly regular medicines');
-    insertKhataTx.run(c2, null, 'DEBIT', 680.00, 'BP medicines and inhaler');
-
-    const insertInvoice = db.prepare(`
-      INSERT INTO invoices (invoice_no, customer_name, customer_mobile, doctor_name, payment_mode, total_amount, discount, final_amount, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
-    `);
-    const insertInvoiceItem = db.prepare(`
-      INSERT INTO invoice_items (invoice_id, product_id, batch_id, is_loose_tablet, qty, unit_price, total_price)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const inv1 = insertInvoice.run('INV-20261016-001', 'Ganesh Kulkarni', '9822345678', 'Dr. Joshi', 'upi', 238.50, 0, 238.50, '-4 hours').lastInsertRowid;
-    insertInvoiceItem.run(inv1, 1, 1, 0, 1, 34.00, 34.00);
-    insertInvoiceItem.run(inv1, 2, 3, 0, 1, 204.50, 204.50);
-
-    const inv2 = insertInvoice.run('INV-20261016-002', 'Anita Pawar', '9421556677', null, 'cash', 253.00, 5.00, 248.00, '-2 hours').lastInsertRowid;
-    insertInvoiceItem.run(inv2, 8, 8, 0, 1, 195.00, 195.00);
-    insertInvoiceItem.run(inv2, 9, 9, 0, 1, 58.00, 58.00);
-
-    const inv3 = insertInvoice.run('INV-20261016-003', 'Ramesh Patil (Grampanchayat)', '9822114477', 'Dr. Patil', 'khata', 450.00, 0, 450.00, '-30 minutes').lastInsertRowid;
-    insertInvoiceItem.run(inv3, 3, 5, 0, 2, 225.00, 450.00);
+    insertDistributor.run('Mahaveer Pharma Distributors', '9822012345', '27AABCM1234P1Z2', 0.00);
+    insertDistributor.run('Sunlife Healthcare Agency', '9423098765', '27AABCS9876Q1Z8', 0.00);
+    insertDistributor.run('Balaji FMCG & Surgicals', '9860011223', '27AABCB4321R1Z5', 0.00);
   });
 
   seedTx();
@@ -1363,6 +1327,15 @@ function addDistributor(data) {
   return { id: res.lastInsertRowid, ...data };
 }
 
+function clearAllRecords() {
+  if (!db) initDatabase();
+  db.prepare(`DELETE FROM invoice_items`).run();
+  db.prepare(`DELETE FROM invoices`).run();
+  db.prepare(`DELETE FROM khata_transactions`).run();
+  db.prepare(`DELETE FROM customers_khata`).run();
+  return { success: true };
+}
+
 module.exports = {
   initDatabase,
   getHardwareId,
@@ -1400,5 +1373,6 @@ module.exports = {
   addKhataPayment,
   addKhataCustomer,
   getDistributors,
-  addDistributor
+  addDistributor,
+  clearAllRecords
 };

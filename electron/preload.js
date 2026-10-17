@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getInvoices: (limit) => ipcRenderer.invoke('db:getInvoices', limit),
   getInvoiceDetails: (invoiceId) => ipcRenderer.invoke('db:getInvoiceDetails', invoiceId),
   getDailyRegisterSummary: () => ipcRenderer.invoke('db:getDailyRegisterSummary'),
+  clearAllRecords: () => ipcRenderer.invoke('db:clearAllRecords'),
 
   // Khata & Customers
   getKhataCustomers: () => ipcRenderer.invoke('db:getKhataCustomers'),
