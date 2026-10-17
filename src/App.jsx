@@ -29,8 +29,23 @@ export default function App() {
   });
 
   // Store Configuration & Licensing
-  const [storeProfile, setStoreProfile] = useState(null);
-  const [licenseStatus, setLicenseStatus] = useState(null);
+  const [storeProfile, setStoreProfile] = useState(() => {
+    try {
+      const raw = localStorage.getItem('gaavpharma_store_profile');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.store_name) return parsed;
+      }
+    } catch {}
+    return null;
+  });
+  const [licenseStatus, setLicenseStatus] = useState(() => {
+    try {
+      const raw = localStorage.getItem('gaavpharma_license');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return null;
+  });
   const [featureToggles, setFeatureToggles] = useState({
     allow_khata: true,
     allow_loose_tablets: true,
@@ -214,7 +229,7 @@ export default function App() {
               storeProfile={storeProfile}
             />
           )}
-          {activeTab === 'expiry' && <ExpiryRadar />}
+          {activeTab === 'expiry' && <ExpiryRadar storeProfile={storeProfile} />}
           {activeTab === 'inventory' && <InventoryManager />}
           {activeTab === 'khata' && (
             <DailyRegisterKhata

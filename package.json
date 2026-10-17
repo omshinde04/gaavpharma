@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "dev:web": "vite",
+    "test": "node test_workflow.js",
     "build": "vite build",
     "build:electron": "vite build && electron-builder",
     "build:win": "vite build && electron-builder --win nsis",

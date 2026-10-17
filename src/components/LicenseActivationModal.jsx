@@ -60,7 +60,7 @@ export default function LicenseActivationModal({ licenseStatus, onActivationSucc
     setError('');
     try {
       const trialKey = await api.generateLicenseKey({
-        storeName: licenseStatus?.storeName || 'Anand Medical & General Stores',
+        storeName: licenseStatus?.storeName || 'Divya Medical Stores',
         plan: 'trial',
         days: 14,
         hardwareId: hwid

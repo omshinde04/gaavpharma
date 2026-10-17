@@ -5,11 +5,11 @@ import { api } from '../services/api';
 export default function ReceiptModal({ invoice, onClose, onNewSale, storeProfile, allowWhatsApp = true }) {
   if (!invoice) return null;
 
-  const storeName = storeProfile?.store_name || 'Anand Medical & General Stores';
-  const storeAddress = storeProfile?.address || 'Near Bus Stand, Main Road';
+  const storeName = storeProfile?.store_name || 'Divya Medical Stores';
+  const storeAddress = storeProfile?.address || 'Main Market, Solapur Road';
   const dlNumber = storeProfile?.dl_number || '20B/21B-MH-SOL-194829';
   const gstin = storeProfile?.gstin || '27AABCA1234F1Z9';
-  const phone = storeProfile?.phone || '+91 98220 12345';
+  const phone = storeProfile?.phone || '9373545169';
 
   const handlePrint = async () => {
     await api.printReceipt();

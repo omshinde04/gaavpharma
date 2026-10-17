@@ -9,6 +9,26 @@ export default function LoginScreen({ onLoginSuccess, storeProfile, licenseStatu
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [activeUsers, setActiveUsers] = useState([]);
+  const [resolvedProfile, setResolvedProfile] = useState(storeProfile);
+
+  useEffect(() => {
+    if (storeProfile && storeProfile.store_name) {
+      setResolvedProfile(storeProfile);
+    } else {
+      api.getStoreProfile().then((p) => {
+        if (p && p.store_name) setResolvedProfile(p);
+      }).catch(console.error);
+    }
+  }, [storeProfile]);
+
+  useEffect(() => {
+    api.getUsers().then((uList) => {
+      if (Array.isArray(uList)) {
+        setActiveUsers(uList.filter((u) => u.is_active));
+      }
+    }).catch(console.error);
+  }, []);
 
   // Keyboard listener for PIN entry
   useEffect(() => {
@@ -93,13 +113,13 @@ export default function LoginScreen({ onLoginSuccess, storeProfile, licenseStatu
             <Activity className="w-6 h-6 text-white" />
           </div>
           <h2 className="text-base font-bold tracking-tight text-white">
-            {storeProfile?.store_name ? storeProfile.store_name : 'GaavPharma Provider Hub'}
+            {resolvedProfile?.store_name ? resolvedProfile.store_name : 'GaavPharma Provider Hub'}
           </h2>
-          {storeProfile?.store_name ? (
+          {resolvedProfile?.store_name ? (
             <div className="flex items-center justify-center space-x-2 text-[11px] text-slate-400 font-mono">
-              {storeProfile?.dl_number && <span>DL: {storeProfile.dl_number}</span>}
-              {storeProfile?.dl_number && storeProfile?.gstin && <span>•</span>}
-              {storeProfile?.gstin && <span>GSTIN: {storeProfile.gstin}</span>}
+              {resolvedProfile?.dl_number && <span>DL: {resolvedProfile.dl_number}</span>}
+              {resolvedProfile?.dl_number && resolvedProfile?.gstin && <span>•</span>}
+              {resolvedProfile?.gstin && <span>GSTIN: {resolvedProfile.gstin}</span>}
             </div>
           ) : (
             <div className="text-[11px] text-slate-400 font-mono">
@@ -197,20 +217,51 @@ export default function LoginScreen({ onLoginSuccess, storeProfile, licenseStatu
               {/* Quick Login Chips */}
               <div className="pt-3 border-t border-slate-100 text-center space-y-1.5 font-sans">
                 <div className="flex flex-wrap justify-center gap-1.5">
-                  {storeProfile?.store_name ? (
-                    <button
-                      onClick={() => setPin('1111')}
-                      className="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[10px] font-medium border border-emerald-200"
-                    >
-                      Store Owner (1111)
-                    </button>
-                  ) : null}
-                  <button
-                    onClick={() => setPin('9999')}
-                    className="px-2.5 py-1 rounded bg-purple-50 hover:bg-purple-100 text-purple-800 text-[10px] font-medium border border-purple-200"
-                  >
-                    Super Admin (9999)
-                  </button>
+                  {activeUsers.length > 0 ? (
+                    activeUsers.map((u) => {
+                      const isOwner = u.role === 'store_admin';
+                      const isSuper = u.role === 'super_admin';
+                      const badgeStyle = isSuper
+                        ? 'bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-200'
+                        : isOwner
+                        ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 font-bold'
+                        : 'bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-200';
+                      const label = isSuper
+                        ? `Super Admin (${u.pin_code})`
+                        : isOwner
+                        ? `Store Owner (${u.pin_code})`
+                        : `${u.display_name} (${u.pin_code})`;
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => setPin(u.pin_code)}
+                          className={`px-2.5 py-1 rounded text-[10px] font-medium border transition-colors ${badgeStyle}`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <>
+                      {resolvedProfile?.store_name && (
+                        <button
+                          type="button"
+                          onClick={() => setPin('1111')}
+                          className="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[10px] font-medium border border-emerald-200"
+                        >
+                          Store Owner (1111)
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setPin('9999')}
+                        className="px-2.5 py-1 rounded bg-purple-50 hover:bg-purple-100 text-purple-800 text-[10px] font-medium border border-purple-200"
+                      >
+                        Super Admin (9999)
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -228,7 +279,7 @@ export default function LoginScreen({ onLoginSuccess, storeProfile, licenseStatu
                     required
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="superadmin or anand_admin"
+                    placeholder="Divya_kale or superadmin"
                     className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium focus:bg-white"
                   />
                 </div>

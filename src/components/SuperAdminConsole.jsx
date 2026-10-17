@@ -67,14 +67,29 @@ export default function SuperAdminConsole({
   const [generatedRenewal, setGeneratedRenewal] = useState('');
   const [copiedRenewal, setCopiedRenewal] = useState(false);
 
-  // Registered Buyers - Starts 100% empty until you provision a store
+  // Registered Buyers - Starts with provisioned stores or empty
   const [clients, setClients] = useState(() => {
     try {
       const saved = localStorage.getItem('gaavpharma_provisioned_clients');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    if (currentStoreProfile?.store_name) {
+      return [
+        {
+          id: 1,
+          name: currentStoreProfile.store_name,
+          owner: 'Divya kale',
+          phone: currentStoreProfile.phone || '9373545169',
+          plan: currentLicenseStatus?.plan === 'trial' ? '14-Day Trial' : '1-Year Pro',
+          expires: new Date(Date.now() + 365 * 86400000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+          status: 'ACTIVE'
+        }
+      ];
     }
+    return [];
   });
 
   const handleProvisionSubmit = async (e) => {
@@ -315,7 +330,7 @@ export default function SuperAdminConsole({
           <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-1.5 font-mono text-[11px]">
             <div className="text-[10px] text-slate-500 uppercase font-semibold">Active Terminal Store</div>
             <div className="font-bold text-white truncate">
-              {currentStoreProfile?.store_name || 'Om Medical Stores'}
+              {currentStoreProfile?.store_name || 'No Store Provisioned'}
             </div>
             <div className="text-slate-400 text-[10px]">
               Plan: <span className="text-emerald-400">{currentLicenseStatus?.plan?.toUpperCase() || 'ANNUAL'}</span>
@@ -419,7 +434,7 @@ export default function SuperAdminConsole({
                         required
                         value={provisionData.storeName}
                         onChange={(e) => setProvisionData({ ...provisionData, storeName: e.target.value })}
-                        placeholder="e.g. Om Medical Stores"
+                        placeholder="e.g. Divya Medical Stores"
                         className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-xs font-semibold text-white focus:outline-none focus:border-purple-500"
                       />
                     </div>
@@ -781,9 +796,19 @@ export default function SuperAdminConsole({
                         </div>
                       </div>
 
-                      <div className="text-right">
-                        <div className="text-xs font-mono text-slate-300 font-medium">Expires: {c.expires}</div>
-                        <span className="text-[10px] text-emerald-400 font-medium">Licensed Active</span>
+                      <div className="flex items-center space-x-3">
+                        <div className="text-right">
+                          <div className="text-xs font-mono text-slate-300 font-medium">Expires: {c.expires}</div>
+                          <span className="text-[10px] text-emerald-400 font-medium">Licensed Active</span>
+                        </div>
+                        <button
+                          onClick={onEnterStorePos}
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 text-[11px] font-semibold transition-all flex items-center gap-1 shadow-xs"
+                          title="Open Store POS Counter"
+                        >
+                          <Store className="w-3.5 h-3.5" />
+                          <span>Store POS</span>
+                        </button>
                       </div>
                     </div>
                   ))}

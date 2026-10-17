@@ -120,15 +120,18 @@ export default function DailyRegisterKhata({ currentUser, featureToggles, storeP
   const sendWhatsAppReminder = async (customer) => {
     const mobile = customer.mobile.replace(/\D/g, '');
     const phone = mobile.startsWith('91') ? mobile : `91${mobile}`;
+    const storeTitle = (storeProfile?.store_name || 'Medical Stores').toUpperCase();
+    const storeShort = storeProfile?.store_name || 'our pharmacy';
+    const contactPhone = storeProfile?.phone || '+91 98220 12345';
 
-    const msg = `*ANAND MEDICAL & GENERAL STORES*%0A` +
+    const msg = `*${storeTitle}*%0A` +
       `--------------------------------%0A` +
       `Namaste *${customer.name}* ji,%0A` +
-      `This is a gentle payment reminder from Anand Medical Stores.%0A` +
+      `This is a gentle payment reminder from ${storeShort}.%0A` +
       `Outstanding Khata Balance: *₹${Number(customer.balance).toFixed(2)}*%0A` +
       `Please clear the dues at your earliest convenience at our counter or via UPI.%0A` +
       `--------------------------------%0A` +
-      `Contact: +91 98220 12345%0A` +
+      `Contact: ${contactPhone}%0A` +
       `Thank you for your patronage.`;
 
     const url = `https://wa.me/${phone}?text=${msg}`;

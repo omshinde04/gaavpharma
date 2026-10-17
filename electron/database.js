@@ -158,12 +158,12 @@ function createTables() {
 
     CREATE TABLE IF NOT EXISTS store_profile (
       id INTEGER PRIMARY KEY CHECK (id = 1),
-      store_name TEXT NOT NULL DEFAULT 'Anand Medical & General Stores',
+      store_name TEXT NOT NULL DEFAULT 'Divya Medical Stores',
       dl_number TEXT DEFAULT '20B/21B-MH-SOL-194829',
       gstin TEXT DEFAULT '27AABCA1234F1Z9',
-      address TEXT DEFAULT 'Near Bus Stand, Main Road',
-      phone TEXT DEFAULT '+91 98220 12345',
-      upi_id TEXT DEFAULT 'anandmedical@oksbi',
+      address TEXT DEFAULT 'Main Market, Solapur Road',
+      phone TEXT DEFAULT '9373545169',
+      upi_id TEXT DEFAULT 'divyakale@upi',
       printer_type TEXT DEFAULT '80mm',
       auto_print BOOLEAN DEFAULT 0
     );
@@ -190,6 +190,18 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_batches_product_id ON batches(product_id);
     CREATE INDEX IF NOT EXISTS idx_invoices_created ON invoices(created_at);
   `);
+
+  // Auto-migrate any legacy store names
+  try {
+    db.prepare(`UPDATE store_profile SET store_name = 'Divya Medical Stores', phone = '9373545169' WHERE store_name = 'Anand Medical & General Stores'`).run();
+    db.prepare(`UPDATE license SET store_name = 'Divya Medical Stores', owner_phone = '9373545169' WHERE store_name = 'Anand Medical & General Stores'`).run();
+    const divya = db.prepare(`SELECT * FROM users WHERE username = 'Divya_kale'`).get();
+    if (!divya) {
+      db.prepare(`INSERT INTO users (username, display_name, pin_code, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?, ?)`).run(
+        'Divya_kale', 'Divya kale', '1111', 'owner123', 'store_admin', 1
+      );
+    }
+  } catch (e) {}
 }
 
 function seedInitialData() {
@@ -198,18 +210,18 @@ function seedInitialData() {
   if (storeProfileCount === 0) {
     db.prepare(`
       INSERT INTO store_profile (id, store_name, dl_number, gstin, address, phone, upi_id, printer_type, auto_print)
-      VALUES (1, 'Anand Medical & General Stores', '20B/21B-MH-SOL-194829', '27AABCA1234F1Z9', 'Near Bus Stand, Main Road', '+91 98220 12345', 'anandmedical@oksbi', '80mm', 0)
+      VALUES (1, 'Divya Medical Stores', '20B/21B-MH-SOL-194829', '27AABCA1234F1Z9', 'Main Market, Solapur Road', '9373545169', 'divyakale@upi', '80mm', 0)
     `).run();
   }
 
-  // 2. Seed Default License (Valid 1-Year Pro Plan for Anand Medical)
+  // 2. Seed Default License (Valid 1-Year Pro Plan for Divya Medical)
   const licenseCount = db.prepare('SELECT COUNT(*) as count FROM license').get().count;
   if (licenseCount === 0) {
     const hwid = getHardwareId();
     const expiresAt = new Date(Date.now() + 365 * 86400000).toISOString();
     const payload = {
-      storeName: 'Anand Medical & General Stores',
-      ownerPhone: '9822012345',
+      storeName: 'Divya Medical Stores',
+      ownerPhone: '9373545169',
       plan: 'annual',
       hardwareId: hwid,
       features: {
@@ -251,6 +263,9 @@ function seedInitialData() {
 
     // Super Admin (You - Software Provider)
     insertUser.run('superadmin', 'Om Shinde (Founder)', '9999', 'admin123', 'super_admin', 1);
+
+    // Store Owner (Divya kale)
+    insertUser.run('Divya_kale', 'Divya kale', '1111', 'owner123', 'store_admin', 1);
   }
 
   // 4. Seed Feature Toggles

@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 
-export default function ExpiryRadar() {
+export default function ExpiryRadar({ storeProfile }) {
   const [radarData, setRadarData] = useState({
     batches: [],
     critical: [],
@@ -339,7 +339,9 @@ export default function ExpiryRadar() {
             <div className="p-5 overflow-y-auto flex-1 space-y-3">
               <div className="p-4 bg-white border border-slate-200 rounded-lg font-mono text-xs space-y-3">
                 <div className="text-center border-b pb-2 space-y-0.5">
-                  <div className="font-bold text-xs uppercase tracking-wide">Anand Medical & General Stores</div>
+                  <div className="font-bold text-xs uppercase tracking-wide">
+                    {storeProfile?.store_name || 'Retail Pharmacy & General Stores'}
+                  </div>
                   <div className="text-[10px] text-slate-500">
                     Expiry Return Debit Memo / Replacement Request
                   </div>
