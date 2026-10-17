@@ -92,6 +92,7 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
   const [showDebitNoteDetailsModal, setShowDebitNoteDetailsModal] = useState(null); // debit note object
   const [showDebitNotePrintModal, setShowDebitNotePrintModal] = useState(null); // debit note object
   const [ledgerData, setLedgerData] = useState(null);
+  const [ledgerTab, setLedgerTab] = useState('pending'); // 'pending' (MediVision: Pending bills ONLY) | 'all' (All ledger transactions)
 
   // Settle Payment State
   const [settleAmount, setSettleAmount] = useState('');
@@ -271,16 +272,44 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
       const updated = [...prev];
       updated[index] = { ...updated[index], [field]: value };
 
-      // If product_id changed, auto-fill product details
+      // If product_id changed, auto-fill product details & historical purchase rates (Photo 10)
       if (field === 'product_id') {
         const prod = products.find(p => p.id === Number(value));
         if (prod) {
           updated[index].product_name = prod.name;
           updated[index].generic_salt = prod.generic_salt || '';
-          if (prod.batches && prod.batches.length > 0) {
+
+          // Look up previous purchase history for this product
+          let lastHistory = null;
+          if (purchases && purchases.length > 0) {
+            for (const p of purchases) {
+              const matchedItem = (p.items || []).find(it => Number(it.product_id) === prod.id || it.product_name === prod.name);
+              if (matchedItem) {
+                lastHistory = {
+                  lastPtr: matchedItem.purchase_rate,
+                  lastMrp: matchedItem.mrp,
+                  lastDisc: matchedItem.discount_percent || 0,
+                  invNo: p.purchase_invoice_no,
+                  date: p.invoice_date
+                };
+                break;
+              }
+            }
+          }
+          if (!lastHistory && prod.batches && prod.batches.length > 0) {
             const b = prod.batches[0];
-            updated[index].mrp = String(b.mrp || '');
-            updated[index].purchase_rate = String(b.purchase_rate || '');
+            lastHistory = {
+              lastPtr: b.purchase_rate,
+              lastMrp: b.mrp,
+              lastDisc: 0,
+              invNo: 'Initial Stock',
+              date: 'Previous'
+            };
+          }
+          updated[index].lastHistory = lastHistory;
+          if (lastHistory) {
+            updated[index].mrp = String(lastHistory.lastMrp || '');
+            updated[index].purchase_rate = String(lastHistory.lastPtr || '');
           }
         }
       }
@@ -525,12 +554,20 @@ Generated via GaavPharma Pharmacy ERP`;
 
   const handleOpenLedger = async (dist) => {
     setShowLedgerModal(dist);
+    setLedgerTab('pending');
     try {
       const data = await api.getDistributorLedger(dist.id);
       setLedgerData(data);
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleOpenSettle = (dist, defaultAmount = null) => {
+    setShowSettleModal(dist);
+    setSettleAmount(defaultAmount !== null ? String(defaultAmount) : String(dist.pending_balance || ''));
+    setSettleReference('');
+    setSettleNote(`Payment for ${dist.name}`);
   };
 
   const sendWhatsAppStatement = (dist) => {
@@ -1791,6 +1828,23 @@ Generated via GaavPharma Pharmacy ERP`;
                                     <option key={p.id} value={p.id}>{p.name} ({p.generic_salt || 'No Salt'})</option>
                                   ))}
                                 </select>
+                                {item.lastHistory && (
+                                  <div className="mt-1 flex items-center justify-between text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                    <span className="text-slate-600 font-sans">
+                                      Last: <strong className="font-mono text-slate-800">₹{Number(item.lastHistory.lastPtr || 0).toFixed(2)}</strong> (MRP ₹{Number(item.lastHistory.lastMrp || 0).toFixed(2)})
+                                    </span>
+                                    {Number(item.purchase_rate) > Number(item.lastHistory.lastPtr) && (
+                                      <span className="text-rose-700 font-bold font-sans flex items-center gap-0.5 bg-rose-50 px-1 rounded border border-rose-200">
+                                        ▲ +₹{(Number(item.purchase_rate) - Number(item.lastHistory.lastPtr)).toFixed(2)} Hiked!
+                                      </span>
+                                    )}
+                                    {Number(item.purchase_rate) > 0 && Number(item.purchase_rate) < Number(item.lastHistory.lastPtr) && (
+                                      <span className="text-emerald-700 font-bold font-sans flex items-center gap-0.5 bg-emerald-50 px-1 rounded border border-emerald-200">
+                                        ▼ -₹{(Number(item.lastHistory.lastPtr) - Number(item.purchase_rate)).toFixed(2)} Cheaper
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                               </td>
                               <td className="p-1.5">
                                 <input
@@ -1842,8 +1896,17 @@ Generated via GaavPharma Pharmacy ERP`;
                                   required
                                   value={item.purchase_rate}
                                   onChange={(e) => handleItemChange(idx, 'purchase_rate', e.target.value)}
-                                  className="w-full px-1.5 py-1 bg-white border border-slate-300 rounded text-right text-xs font-bold"
+                                  className={`w-full px-1.5 py-1 bg-white border rounded text-right text-xs font-bold ${
+                                    item.lastHistory && Number(item.purchase_rate) > Number(item.lastHistory.lastPtr)
+                                      ? 'border-rose-400 text-rose-800 bg-rose-50/30'
+                                      : 'border-slate-300'
+                                  }`}
                                 />
+                                {item.lastHistory && (
+                                  <div className="text-[9px] text-slate-400 text-right font-mono mt-0.5">
+                                    Prev: ₹{Number(item.lastHistory.lastPtr || 0).toFixed(2)}
+                                  </div>
+                                )}
                               </td>
                               <td className="p-1.5">
                                 <select
@@ -1875,6 +1938,14 @@ Generated via GaavPharma Pharmacy ERP`;
                                   required
                                   value={item.mrp}
                                   onChange={(e) => handleItemChange(idx, 'mrp', e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      if (idx === purchaseItems.length - 1) {
+                                        handleAddItemRow();
+                                      }
+                                    }
+                                  }}
                                   className="w-full px-1.5 py-1 bg-white border border-slate-300 rounded text-right text-xs font-bold text-emerald-800"
                                 />
                               </td>
@@ -2061,86 +2132,232 @@ Generated via GaavPharma Pharmacy ERP`;
         </div>
       )}
 
-      {/* MODAL 3: Distributor Ledger History */}
+      {/* MODAL 3: MediVision Outstanding Ledger : Pending bills ONLY (Photo 2) */}
       {showLedgerModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-100">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[88vh] flex flex-col overflow-hidden font-mono">
+            
+            {/* Header (Photo 2 Style) */}
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
               <div>
-                <h3 className="font-bold text-sm">Wholesale Ledger Statement: {showLedgerModal.name}</h3>
-                <p className="text-[10px] text-slate-400">Phone: {showLedgerModal.phone || '-'} | GSTIN: {showLedgerModal.gstin || '-'}</p>
+                <div className="flex items-center space-x-2">
+                  <h3 className="font-bold text-sm tracking-wide">
+                    Outstanding Ledger : {showLedgerModal.name}
+                  </h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800 font-bold">
+                    Pending bills ONLY
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Phone: {showLedgerModal.phone || '-'} | GSTIN: {showLedgerModal.gstin || '-'} | Credit Terms: {showLedgerModal.payment_terms_days || 21} Days
+                </p>
               </div>
               <button onClick={() => setShowLedgerModal(null)} className="text-slate-400 hover:text-white">
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* View Mode Navigation Tabs */}
+            <div className="px-4 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between text-xs">
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setLedgerTab('pending')}
+                  className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                    ledgerTab === 'pending'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-300'
+                  }`}
+                >
+                  Pending Bills ONLY (बिल-नुसार प्रलंबित)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLedgerTab('all')}
+                  className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                    ledgerTab === 'all'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-300'
+                  }`}
+                >
+                  All Transactions (सर्व व्यवहार नोंद)
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => sendWhatsAppStatement(showLedgerModal)}
+                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold flex items-center gap-1 shadow-xs"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                <span>WhatsApp Statement</span>
               </button>
             </div>
 
             <div className="p-4 overflow-y-auto flex-1 space-y-3">
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between font-mono">
+              {/* Summary Balance Banner */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
                 <div>
-                  <span className="text-slate-500 text-xs">Total Outstanding Debt:</span>
-                  <div className="text-xl font-bold text-rose-700">₹{Number(showLedgerModal.pending_balance || 0).toFixed(2)}</div>
+                  <span className="text-slate-500 text-xs">एकूण येणे / बाकी रक्कम (Net Payable):</span>
+                  <div className="text-xl font-bold text-rose-700">₹{Number(showLedgerModal.pending_balance || 0).toFixed(2)} Cr</div>
                 </div>
-                <button
-                  onClick={() => sendWhatsAppStatement(showLedgerModal)}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs"
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Send WhatsApp Statement</span>
-                </button>
+                <div className="text-right text-xs text-slate-500 font-sans">
+                  <span>खाते पद्धती: </span>
+                  <strong className="text-slate-800">Bill-by-Bill Outstanding</strong>
+                </div>
               </div>
 
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="bg-slate-100 text-slate-600 uppercase text-[9px] font-bold border-b border-slate-200">
-                      <th className="py-2 px-3">Date</th>
-                      <th className="py-2 px-3">Type</th>
-                      <th className="py-2 px-3">Reference</th>
-                      <th className="py-2 px-3">Mode</th>
-                      <th className="py-2 px-3 text-right">Debit (+)</th>
-                      <th className="py-2 px-3 text-right">Credit (-)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                    {(!ledgerData || !ledgerData.entries || ledgerData.entries.length === 0) ? (
-                      <tr>
-                        <td colSpan="6" className="py-8 text-center text-slate-400 font-sans">
-                          No ledger transactions recorded yet.
-                        </td>
+              {/* TAB 1: PENDING BILLS ONLY (Photo 2) */}
+              {ledgerTab === 'pending' ? (
+                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold border-b border-slate-200 tracking-wider">
+                        <th className="py-2.5 px-3">Date</th>
+                        <th className="py-2.5 px-3">Voucher No.</th>
+                        <th className="py-2.5 px-3 text-right">Bill Amount</th>
+                        <th className="py-2.5 px-3 text-right">Balance Amount Dr/Cr</th>
+                        <th className="py-2.5 px-3">Due Date</th>
+                        <th className="py-2.5 px-3 text-center">Days (मुदत दिवस)</th>
+                        <th className="py-2.5 px-3 text-center">Action</th>
                       </tr>
-                    ) : (
-                      ledgerData.entries.map((e, idx) => {
-                        const isPurchase = e.type === 'PURCHASE_BILL';
-                        return (
-                          <tr key={idx} className="hover:bg-slate-50">
-                            <td className="py-2 px-3 text-slate-500 text-[10px]">
-                              {new Date(e.created_at).toLocaleDateString('en-IN')}
-                            </td>
-                            <td className="py-2 px-3 font-sans font-bold">
-                              <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase ${isPurchase ? 'bg-blue-50 text-blue-800' : 'bg-emerald-50 text-emerald-800'}`}>
-                                {e.type}
-                              </span>
-                            </td>
-                            <td className="py-2 px-3">{e.reference_no || '-'}</td>
-                            <td className="py-2 px-3 text-slate-500 uppercase text-[10px]">{e.payment_mode || '-'}</td>
-                            <td className="py-2 px-3 text-right font-bold text-rose-700">
-                              {isPurchase ? `₹${Number(e.amount).toFixed(2)}` : '-'}
-                            </td>
-                            <td className="py-2 px-3 text-right font-bold text-emerald-700">
-                              {!isPurchase ? `₹${Number(e.amount).toFixed(2)}` : '-'}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-[11px]">
+                      {(() => {
+                        const allPurchases = ledgerData?.purchases || purchases.filter(p => p.distributor_id === showLedgerModal.id);
+                        const pendingBills = allPurchases.filter(p => (p.total_amount - (p.paid_amount || 0)) > 0.01);
+
+                        if (pendingBills.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan="7" className="py-8 text-center text-slate-400 font-sans">
+                                कोणतेही बिल प्रलंबित नाही (No pending bills for this distributor).
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        return pendingBills.map((bill, idx) => {
+                          const billDate = new Date(bill.invoice_date || bill.created_at);
+                          const balance = bill.total_amount - (bill.paid_amount || 0);
+                          const now = new Date();
+                          const diffTime = now - billDate;
+                          const overdueDays = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
+                          const isHighAging = overdueDays > (showLedgerModal.payment_terms_days || 21);
+
+                          return (
+                            <tr key={bill.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-2 px-3 text-slate-600 font-sans">
+                                {new Date(bill.invoice_date || bill.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                              </td>
+                              <td className="py-2 px-3 font-bold text-slate-900">
+                                {bill.purchase_invoice_no}
+                              </td>
+                              <td className="py-2 px-3 text-right font-semibold text-slate-700">
+                                ₹{Number(bill.total_amount).toFixed(2)}
+                              </td>
+                              <td className="py-2 px-3 text-right font-bold text-rose-700">
+                                ₹{Number(balance).toFixed(2)} Cr
+                              </td>
+                              <td className="py-2 px-3 text-slate-500 font-sans text-[10px]">
+                                {bill.due_date ? new Date(bill.due_date).toLocaleDateString('en-IN') : '-'}
+                              </td>
+                              <td className="py-2 px-3 text-center">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  isHighAging
+                                    ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                  {overdueDays} Days
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowLedgerModal(null);
+                                    handleOpenSettle(showLedgerModal, balance);
+                                  }}
+                                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-bold shadow-2xs"
+                                >
+                                  Settle Bill
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()}
+                    </tbody>
+                  </table>
+                  
+                  {/* Photo 2 Footer: Items count and Net Payable */}
+                  <div className="p-3 bg-slate-100 border-t border-slate-200 flex items-center justify-between text-xs text-slate-700 font-bold">
+                    <span>
+                      {((ledgerData?.purchases || purchases.filter(p => p.distributor_id === showLedgerModal.id)).filter(p => (p.total_amount - (p.paid_amount || 0)) > 0.01)).length} Items Pending
+                    </span>
+                    <span className="text-rose-700 font-mono text-sm">
+                      Net Payable: ₹{Number(showLedgerModal.pending_balance || 0).toFixed(2)} Cr
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                /* TAB 2: ALL TRANSACTIONS TABLE */
+                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="bg-slate-100 text-slate-600 uppercase text-[9px] font-bold border-b border-slate-200">
+                        <th className="py-2 px-3">Date</th>
+                        <th className="py-2 px-3">Type</th>
+                        <th className="py-2 px-3">Reference</th>
+                        <th className="py-2 px-3">Mode</th>
+                        <th className="py-2 px-3 text-right">Debit (+)</th>
+                        <th className="py-2 px-3 text-right">Credit (-)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-[11px]">
+                      {(!ledgerData || !ledgerData.entries || ledgerData.entries.length === 0) ? (
+                        <tr>
+                          <td colSpan="6" className="py-8 text-center text-slate-400 font-sans">
+                            No ledger transactions recorded yet.
+                          </td>
+                        </tr>
+                      ) : (
+                        ledgerData.entries.map((e, idx) => {
+                          const isPurchase = e.type === 'PURCHASE_BILL';
+                          return (
+                            <tr key={idx} className="hover:bg-slate-50">
+                              <td className="py-2 px-3 text-slate-500 text-[10px]">
+                                {new Date(e.created_at).toLocaleDateString('en-IN')}
+                              </td>
+                              <td className="py-2 px-3 font-sans font-bold">
+                                <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase ${isPurchase ? 'bg-blue-50 text-blue-800' : 'bg-emerald-50 text-emerald-800'}`}>
+                                  {e.type}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 font-bold">{e.reference_no || '-'}</td>
+                              <td className="py-2 px-3 text-slate-500 uppercase text-[10px]">{e.payment_mode || '-'}</td>
+                              <td className="py-2 px-3 text-right font-bold text-rose-700">
+                                {isPurchase ? `₹${Number(e.amount).toFixed(2)}` : '-'}
+                              </td>
+                              <td className="py-2 px-3 text-right font-bold text-emerald-700">
+                                {!isPurchase ? `₹${Number(e.amount).toFixed(2)}` : '-'}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
-            <div className="p-3 bg-slate-100 border-t border-slate-200 flex justify-end">
+            <div className="p-3 bg-slate-100 border-t border-slate-200 flex justify-between items-center text-xs">
+              <span className="text-slate-500">
+                Hotkey: <kbd className="bg-white border px-1 py-0.5 rounded font-bold">Esc</kbd> Close
+              </span>
               <button
+                type="button"
                 onClick={() => setShowLedgerModal(null)}
                 className="px-4 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold"
               >
