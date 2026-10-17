@@ -5,6 +5,7 @@ import BillingCounter from './components/BillingCounter';
 import ExpiryRadar from './components/ExpiryRadar';
 import InventoryManager from './components/InventoryManager';
 import DailyRegisterKhata from './components/DailyRegisterKhata';
+import PurchaseDistributorManager from './components/PurchaseDistributorManager';
 import LoginScreen from './components/LoginScreen';
 import StoreSettingsModal from './components/StoreSettingsModal';
 import SuperAdminHubModal from './components/SuperAdminHubModal';
@@ -14,7 +15,7 @@ import { api } from './services/api';
 import { AlertCircle, Key } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('billing'); // 'billing' | 'expiry' | 'inventory' | 'khata'
+  const [activeTab, setActiveTab] = useState('billing'); // 'billing' | 'expiry' | 'inventory' | 'purchases' | 'khata'
   const [expiryAlertCount, setExpiryAlertCount] = useState(0);
   const [superAdminView, setSuperAdminView] = useState('console'); // 'console' | 'pos'
 
@@ -125,6 +126,9 @@ export default function App() {
         setActiveTab('expiry');
       } else if (e.key === 'F4' && !e.target.matches('input, textarea')) {
         setActiveTab('inventory');
+      } else if (e.key === 'F7' && !e.target.matches('input, textarea')) {
+        e.preventDefault();
+        setActiveTab('purchases');
       } else if (e.key === 'F5') {
         e.preventDefault();
         setActiveTab('khata');
@@ -250,6 +254,13 @@ export default function App() {
           )}
           {activeTab === 'expiry' && <ExpiryRadar storeProfile={storeProfile} />}
           {activeTab === 'inventory' && <InventoryManager />}
+          {activeTab === 'purchases' && (
+            <PurchaseDistributorManager
+              currentUser={currentUser}
+              featureToggles={featureToggles}
+              storeProfile={storeProfile}
+            />
+          )}
           {activeTab === 'khata' && (
             <DailyRegisterKhata
               currentUser={currentUser}

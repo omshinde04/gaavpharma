@@ -203,6 +203,121 @@ async function runTestSuite() {
   const renewalResult = await api.applyRenewalCode(generatedRenewal);
   assert(renewalResult && renewalResult.isValid === true, 'Renewal code successfully applied and extends subscription');
 
+  // 8. Phase 1: Wholesale Purchase Inward & Distributor Ledger Engine Test
+  console.log('\n🚛 [TEST GROUP 8] Wholesale Inward & Distributor Ledger Engine (MediVision Parity)');
+  
+  // 8.1 Create Ghoti Wholesale Distributor
+  const newDist = await api.addDistributor({
+    name: 'Mahaveer Pharma Ghoti',
+    contact_person: 'Suresh Shah',
+    phone: '9822998877',
+    dl_number: '20B-MH-NAS-1234',
+    address: 'Station Road, Ghoti, Nashik',
+    payment_terms_days: 21
+  });
+  assert(newDist && newDist.name === 'Mahaveer Pharma Ghoti', 'Distributor Mahaveer Pharma Ghoti created');
+  assert(Number(newDist.pending_balance) === 0, 'New distributor starts with zero pending debt');
+
+  // 8.2 Get initial stock of Dolo 650
+  const doloBeforePurchase = await api.searchProducts('Dolo');
+  const doloInitialStock = doloBeforePurchase.length > 0 ? doloBeforePurchase[0].total_stock : 0;
+
+  // 8.3 Inward Multi-line Purchase Bill with Free Scheme (10+2 free) & 12% GST
+  const purchaseItems = [
+    {
+      product_id: 1,
+      item_name: 'Dolo 650 Tablet',
+      batch_no: 'MH9921',
+      expiry_date: '12/28',
+      qty: 10,
+      free_qty: 2, // 10 + 2 Free Scheme
+      purchase_rate: 25.00,
+      mrp: 35.00,
+      gst_pct: 12,
+      discount_pct: 0,
+      taxable_amount: 250.00,
+      gst_amount: 30.00,
+      total_amount: 280.00,
+      landing_cost_per_unit: 23.33
+    },
+    {
+      product_id: 2,
+      item_name: 'Azithral 500 Tablet',
+      batch_no: 'AZ5501',
+      expiry_date: '08/27',
+      qty: 5,
+      free_qty: 0,
+      purchase_rate: 100.00,
+      mrp: 135.00,
+      gst_pct: 12,
+      discount_pct: 5, // 5% trade discount
+      taxable_amount: 475.00,
+      gst_amount: 57.00,
+      total_amount: 532.00,
+      landing_cost_per_unit: 106.40
+    }
+  ];
+
+  const purchaseBill = await api.createPurchase({
+    distributor_id: newDist.id,
+    bill_no: 'BILL-GHT-2026-01',
+    bill_date: '2026-10-17',
+    due_date: '2026-11-07',
+    subtotal: 725.00,
+    total_discount: 25.00,
+    total_gst: 87.00,
+    net_amount: 812.00,
+    payment_status: 'UNPAID',
+    payment_mode: 'CREDIT',
+    notes: 'Ghoti weekly replenishment'
+  }, purchaseItems);
+
+  assert(purchaseBill && purchaseBill.bill_no === 'BILL-GHT-2026-01', 'Wholesale Purchase bill saved successfully');
+  assert(Number(purchaseBill.net_amount) === 812.00, 'Purchase Bill net amount calculated accurately (₹812.00)');
+
+  // 8.4 Verify inventory stock auto-inwarded (10 ordered + 2 free = 12 added)
+  const doloAfterPurchase = await api.searchProducts('Dolo');
+  assert(doloAfterPurchase[0].total_stock === doloInitialStock + 12, 'Inventory stock auto-inwarded including free scheme items (10 + 2 = 12 units)');
+
+  // 8.5 Verify Distributor Ledger updated with Apale Dena (Payable Debt)
+  const ledgerData = await api.getDistributorLedger(newDist.id);
+  assert(ledgerData && ledgerData.distributor.name === 'Mahaveer Pharma Ghoti', 'Distributor ledger fetched successfully');
+  assert(Number(ledgerData.distributor.pending_balance) === 812.00, 'Distributor pending balance accurately reflects bill debt (₹812.00)');
+  assert(ledgerData.transactions.length >= 1, 'Ledger transaction logged for wholesale bill inward');
+
+  // 8.6 Verify Purchase Summary metrics
+  const purchaseSummary = await api.getPurchaseSummary();
+  assert(Number(purchaseSummary.total_purchases_month) >= 812.00, 'Wholesale purchase summary tracks monthly purchases');
+  assert(Number(purchaseSummary.total_payable_balance) >= 812.00, 'Wholesale summary tracks total accounts payable to distributors');
+
+  // 8.7 Verify Payment Settlement to Distributor (Partial payment via UPI)
+  const paymentResult = await api.addDistributorPayment(newDist.id, 500.00, 'UPI', 'Paid via PhonePe / UPI Txn #998821');
+  assert(paymentResult && paymentResult.success === true, 'Distributor payment of ₹500 recorded');
+
+  const ledgerAfterPayment = await api.getDistributorLedger(newDist.id);
+  assert(Number(ledgerAfterPayment.distributor.pending_balance) === 312.00, 'Distributor pending balance reduced (₹812 - ₹500 = ₹312)');
+
+  // 8.8 Verify Cashier RBAC configuration toggle
+  const rbacToggles = await api.getFeatureToggles();
+  assert(rbacToggles.allow_cashier_purchase_inward === false, 'Cashier access to wholesale purchase rates & debt locked by default');
+  
+  await api.updateFeatureToggle('allow_cashier_purchase_inward', true);
+  const updatedRbac = await api.getFeatureToggles();
+  assert(updatedRbac.allow_cashier_purchase_inward === true, 'Store Admin can dynamically permit cashier wholesale inwarding');
+  await api.updateFeatureToggle('allow_cashier_purchase_inward', false); // re-lock for security
+
+  // 8.9 Test purchase bill details
+  const billDetails = await api.getPurchaseDetails(purchaseBill.id);
+  assert(billDetails && billDetails.items.length === 2, 'Purchase bill details loaded with multi-line items and GST breakdown');
+
+  // 8.10 Verify clearAllRecords wipes wholesale purchases and resets distributor debt
+  await api.clearAllRecords();
+  const resetPurchases = await api.getPurchases();
+  assert(resetPurchases.length === 0, 'clearAllRecords wipes all wholesale purchases from database');
+  const distAfterClear = await api.getDistributorLedger(newDist.id);
+  assert(Number(distAfterClear.distributor.pending_balance) === 0, 'clearAllRecords resets distributor debt to ₹0');
+  assert(distAfterClear.entries.length === 0, 'clearAllRecords wipes distributor ledger transactions');
+
   console.log('\n========================================================');
   console.log(`🏁 TEST RESULTS: ${passed} PASSED | ${failed} FAILED`);
   console.log('========================================================\n');

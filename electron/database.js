@@ -120,7 +120,54 @@ function createTables() {
       name TEXT NOT NULL,
       phone TEXT,
       gstin TEXT,
+      dl_number TEXT,
+      address TEXT,
+      payment_terms_days INTEGER DEFAULT 21,
       pending_balance REAL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS purchases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      purchase_invoice_no TEXT NOT NULL,
+      distributor_id INTEGER NOT NULL REFERENCES distributors(id),
+      invoice_date TEXT NOT NULL,
+      payment_status TEXT CHECK(payment_status IN ('UNPAID', 'PARTIAL', 'PAID')) DEFAULT 'UNPAID',
+      payment_mode TEXT CHECK(payment_mode IN ('credit', 'cash', 'upi', 'cheque', 'bank_transfer')) DEFAULT 'credit',
+      subtotal REAL NOT NULL,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      discount REAL DEFAULT 0,
+      net_amount REAL NOT NULL,
+      paid_amount REAL DEFAULT 0,
+      due_date TEXT,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS purchase_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      batch_no TEXT NOT NULL,
+      expiry_date TEXT NOT NULL,
+      qty INTEGER NOT NULL,
+      free_qty INTEGER DEFAULT 0,
+      purchase_rate REAL NOT NULL,
+      mrp REAL NOT NULL,
+      gst_rate REAL DEFAULT 12,
+      discount_percent REAL DEFAULT 0,
+      landing_cost_per_unit REAL NOT NULL,
+      total_amount REAL NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS distributor_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      distributor_id INTEGER NOT NULL REFERENCES distributors(id) ON DELETE CASCADE,
+      type TEXT CHECK(type IN ('PURCHASE_BILL', 'PAYMENT', 'DEBIT_NOTE_RETURN')) NOT NULL,
+      amount REAL NOT NULL,
+      reference_no TEXT,
+      payment_mode TEXT,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS customers_khata (
@@ -1320,11 +1367,244 @@ function getDistributors() {
 function addDistributor(data) {
   if (!db) initDatabase();
   const stmt = db.prepare(`
-    INSERT INTO distributors (name, phone, gstin, pending_balance)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO distributors (name, phone, gstin, dl_number, address, payment_terms_days, pending_balance)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
-  const res = stmt.run(data.name, data.phone || null, data.gstin || null, data.pending_balance || 0);
+  const res = stmt.run(
+    data.name,
+    data.phone || null,
+    data.gstin || null,
+    data.dl_number || null,
+    data.address || null,
+    data.payment_terms_days || 21,
+    data.pending_balance || 0
+  );
   return { id: res.lastInsertRowid, ...data };
+}
+
+function updateDistributor(id, data) {
+  if (!db) initDatabase();
+  db.prepare(`
+    UPDATE distributors
+    SET name = COALESCE(?, name),
+        phone = COALESCE(?, phone),
+        gstin = COALESCE(?, gstin),
+        dl_number = COALESCE(?, dl_number),
+        address = COALESCE(?, address),
+        payment_terms_days = COALESCE(?, payment_terms_days)
+    WHERE id = ?
+  `).run(data.name, data.phone, data.gstin, data.dl_number, data.address, data.payment_terms_days, id);
+  return db.prepare(`SELECT * FROM distributors WHERE id = ?`).get(id);
+}
+
+function deleteDistributor(id) {
+  if (!db) initDatabase();
+  db.prepare(`DELETE FROM distributors WHERE id = ?`).run(id);
+  return { success: true };
+}
+
+function getPurchases(limit = 50) {
+  if (!db) initDatabase();
+  const rows = db.prepare(`
+    SELECT p.*, d.name as distributor_name, d.phone as distributor_phone,
+           (SELECT COUNT(*) FROM purchase_items WHERE purchase_id = p.id) as item_count
+    FROM purchases p
+    LEFT JOIN distributors d ON p.distributor_id = d.id
+    ORDER BY p.id DESC
+    LIMIT ?
+  `).all(limit);
+  return rows.map(r => ({ ...r, bill_no: r.purchase_invoice_no }));
+}
+
+function getPurchaseDetails(purchaseId) {
+  if (!db) initDatabase();
+  const purchase = db.prepare(`
+    SELECT p.*, d.name as distributor_name, d.phone as distributor_phone, d.gstin as distributor_gstin, d.dl_number as distributor_dl
+    FROM purchases p
+    LEFT JOIN distributors d ON p.distributor_id = d.id
+    WHERE p.id = ?
+  `).get(purchaseId);
+  if (!purchase) return null;
+
+  const items = db.prepare(`
+    SELECT pi.*, pr.name as product_name, pr.generic_salt, pr.category, pr.rack_location
+    FROM purchase_items pi
+    LEFT JOIN products pr ON pi.product_id = pr.id
+    WHERE pi.purchase_id = ?
+  `).all(purchaseId);
+
+  return { ...purchase, bill_no: purchase.purchase_invoice_no, items };
+}
+
+function createPurchase(purchaseData, items) {
+  if (!db) initDatabase();
+  const tx = db.transaction(() => {
+    const invoiceNo = purchaseData.purchase_invoice_no || purchaseData.bill_no || (`BILL-${Date.now()}`);
+    const invoiceDate = purchaseData.invoice_date || purchaseData.bill_date || new Date().toISOString().slice(0, 10);
+    const subtotal = parseFloat(purchaseData.subtotal) || 0;
+    const taxAmount = purchaseData.tax_amount != null ? parseFloat(purchaseData.tax_amount) : (parseFloat(purchaseData.total_gst) || 0);
+    const discount = purchaseData.discount != null ? parseFloat(purchaseData.discount) : (parseFloat(purchaseData.total_discount) || 0);
+    const netAmount = purchaseData.net_amount != null ? parseFloat(purchaseData.net_amount) : (subtotal + taxAmount - discount);
+    const paidAmount = parseFloat(purchaseData.paid_amount) || 0;
+
+    const stmtPurchase = db.prepare(`
+      INSERT INTO purchases (
+        purchase_invoice_no, distributor_id, invoice_date, payment_status, payment_mode,
+        subtotal, tax_amount, discount, net_amount, paid_amount, due_date, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const resPurchase = stmtPurchase.run(
+      invoiceNo,
+      purchaseData.distributor_id,
+      invoiceDate,
+      purchaseData.payment_status || 'UNPAID',
+      purchaseData.payment_mode || 'credit',
+      subtotal,
+      taxAmount,
+      discount,
+      netAmount,
+      paidAmount,
+      purchaseData.due_date || null,
+      purchaseData.notes || null
+    );
+
+    const purchaseId = resPurchase.lastInsertRowid;
+
+    const stmtItem = db.prepare(`
+      INSERT INTO purchase_items (
+        purchase_id, product_id, batch_no, expiry_date, qty, free_qty,
+        purchase_rate, mrp, gst_rate, discount_percent, landing_cost_per_unit, total_amount
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const findBatch = db.prepare(`
+      SELECT * FROM batches WHERE product_id = ? AND batch_no = ?
+    `);
+
+    const updateBatch = db.prepare(`
+      UPDATE batches
+      SET stock_qty = stock_qty + ?, purchase_rate = ?, mrp = ?, expiry_date = ?
+      WHERE id = ?
+    `);
+
+    const insertBatch = db.prepare(`
+      INSERT INTO batches (product_id, batch_no, expiry_date, purchase_rate, mrp, stock_qty)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const item of items) {
+      const totalUnits = (parseInt(item.qty, 10) || 0) + (parseInt(item.free_qty, 10) || 0);
+      const totalAmount = item.total_amount != null ? parseFloat(item.total_amount) : 0;
+      const landingCost = totalUnits > 0 ? totalAmount / totalUnits : (item.purchase_rate || 0);
+      const gstRate = item.gst_rate != null ? parseFloat(item.gst_rate) : (parseFloat(item.gst_pct) || 12);
+      const discountPercent = item.discount_percent != null ? parseFloat(item.discount_percent) : (parseFloat(item.discount_pct) || 0);
+
+      stmtItem.run(
+        purchaseId,
+        item.product_id,
+        item.batch_no,
+        item.expiry_date,
+        item.qty,
+        item.free_qty || 0,
+        item.purchase_rate,
+        item.mrp,
+        gstRate,
+        discountPercent,
+        Number(landingCost.toFixed(2)),
+        totalAmount
+      );
+
+      // Inward into inventory batches
+      const existing = findBatch.get(item.product_id, item.batch_no);
+      if (existing) {
+        updateBatch.run(totalUnits, item.purchase_rate, item.mrp, item.expiry_date, existing.id);
+      } else {
+        insertBatch.run(item.product_id, item.batch_no, item.expiry_date, item.purchase_rate, item.mrp, totalUnits);
+      }
+    }
+
+    // Ledger Entry for Purchase Bill
+    db.prepare(`
+      INSERT INTO distributor_ledger (distributor_id, type, amount, reference_no, payment_mode, notes)
+      VALUES (?, 'PURCHASE_BILL', ?, ?, ?, ?)
+    `).run(
+      purchaseData.distributor_id,
+      netAmount,
+      invoiceNo,
+      purchaseData.payment_mode || 'credit',
+      `Inward Bill #${invoiceNo}`
+    );
+
+    // Update distributor pending debt
+    const unpaidAmount = Math.max(0, netAmount - paidAmount);
+    db.prepare(`
+      UPDATE distributors
+      SET pending_balance = pending_balance + ?
+      WHERE id = ?
+    `).run(unpaidAmount, purchaseData.distributor_id);
+
+    return getPurchaseDetails(purchaseId);
+  });
+
+  return tx();
+}
+
+function getDistributorLedger(distributorId) {
+  if (!db) initDatabase();
+  const distributor = db.prepare(`SELECT * FROM distributors WHERE id = ?`).get(distributorId);
+  if (!distributor) return null;
+
+  const entries = db.prepare(`
+    SELECT * FROM distributor_ledger
+    WHERE distributor_id = ?
+    ORDER BY id DESC
+  `).all(distributorId);
+
+  const purchases = db.prepare(`
+    SELECT * FROM purchases
+    WHERE distributor_id = ?
+    ORDER BY id DESC
+  `).all(distributorId);
+
+  return { distributor, entries, purchases, transactions: entries };
+}
+
+function addDistributorPayment(distributorId, amount, paymentMode = 'NEFT_UPI', referenceNo = '', note = '') {
+  if (!db) initDatabase();
+  const numAmount = parseFloat(amount);
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE distributors
+      SET pending_balance = MAX(0, pending_balance - ?)
+      WHERE id = ?
+    `).run(numAmount, distributorId);
+
+    db.prepare(`
+      INSERT INTO distributor_ledger (distributor_id, type, amount, reference_no, payment_mode, notes)
+      VALUES (?, 'PAYMENT', ?, ?, ?, ?)
+    `).run(distributorId, numAmount, referenceNo, paymentMode, note || 'Payment Settled');
+
+    const updated = db.prepare(`SELECT * FROM distributors WHERE id = ?`).get(distributorId);
+    return { success: true, distributor: updated };
+  });
+  return tx();
+}
+
+function getPurchaseSummary() {
+  if (!db) initDatabase();
+  const totalBills = db.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(net_amount), 0) as total_spent FROM purchases`).get();
+  const totalPayable = db.prepare(`SELECT COALESCE(SUM(pending_balance), 0) as total_payable FROM distributors`).get();
+  const activeDistributors = db.prepare(`SELECT COUNT(*) as count FROM distributors`).get();
+
+  return {
+    total_bills: totalBills.count,
+    total_spent: totalBills.total_spent,
+    total_purchases_month: totalBills.total_spent,
+    total_payable: totalPayable.total_payable,
+    total_payable_balance: totalPayable.total_payable,
+    distributor_count: activeDistributors.count
+  };
 }
 
 function clearAllRecords() {
@@ -1333,6 +1613,10 @@ function clearAllRecords() {
   db.prepare(`DELETE FROM invoices`).run();
   db.prepare(`DELETE FROM khata_transactions`).run();
   db.prepare(`DELETE FROM customers_khata`).run();
+  db.prepare(`DELETE FROM purchase_items`).run();
+  db.prepare(`DELETE FROM purchases`).run();
+  db.prepare(`DELETE FROM distributor_ledger`).run();
+  db.prepare(`UPDATE distributors SET pending_balance = 0`).run();
   return { success: true };
 }
 
@@ -1374,5 +1658,13 @@ module.exports = {
   addKhataCustomer,
   getDistributors,
   addDistributor,
+  updateDistributor,
+  deleteDistributor,
+  getPurchases,
+  getPurchaseDetails,
+  createPurchase,
+  getDistributorLedger,
+  addDistributorPayment,
+  getPurchaseSummary,
   clearAllRecords
 };

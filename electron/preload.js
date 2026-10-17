@@ -50,9 +50,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addKhataPayment: (customerId, amount, note) => ipcRenderer.invoke('db:addKhataPayment', customerId, amount, note),
   addKhataCustomer: (name, mobile) => ipcRenderer.invoke('db:addKhataCustomer', name, mobile),
 
-  // Distributors
+  // Distributors & Purchases (Wholesale)
   getDistributors: () => ipcRenderer.invoke('db:getDistributors'),
   addDistributor: (data) => ipcRenderer.invoke('db:addDistributor', data),
+  updateDistributor: (id, data) => ipcRenderer.invoke('db:updateDistributor', id, data),
+  deleteDistributor: (id) => ipcRenderer.invoke('db:deleteDistributor', id),
+  getPurchases: (limit) => ipcRenderer.invoke('db:getPurchases', limit),
+  getPurchaseDetails: (purchaseId) => ipcRenderer.invoke('db:getPurchaseDetails', purchaseId),
+  createPurchase: (purchaseData, items) => ipcRenderer.invoke('db:createPurchase', purchaseData, items),
+  getDistributorLedger: (distributorId) => ipcRenderer.invoke('db:getDistributorLedger', distributorId),
+  addDistributorPayment: (distributorId, amount, paymentMode, referenceNo, note) => ipcRenderer.invoke('db:addDistributorPayment', distributorId, amount, paymentMode, referenceNo, note),
+  getPurchaseSummary: () => ipcRenderer.invoke('db:getPurchaseSummary'),
 
   // System Utilities
   openExternalUrl: (url) => ipcRenderer.invoke('sys:openExternalUrl', url),

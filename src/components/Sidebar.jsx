@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingCart, AlertTriangle, Boxes, BookOpen, Terminal, CheckCircle2 } from 'lucide-react';
+import { ShoppingCart, AlertTriangle, Boxes, BookOpen, Terminal, CheckCircle2, Truck } from 'lucide-react';
 
 export default function Sidebar({ activeTab, setActiveTab, expiryAlertCount = 0 }) {
   const navItems = [
@@ -26,6 +26,14 @@ export default function Sidebar({ activeTab, setActiveTab, expiryAlertCount = 0 
       sublabel: 'Medicines & FMCG',
       icon: Boxes,
       shortcut: 'F4',
+      badge: null
+    },
+    {
+      id: 'purchases',
+      label: 'Wholesale & Inward',
+      sublabel: 'Distributors & Bills',
+      icon: Truck,
+      shortcut: 'F7',
       badge: null
     },
     {

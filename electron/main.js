@@ -111,9 +111,17 @@ function setupIpcHandlers() {
   ipcMain.handle('db:addKhataPayment', (_, customerId, amount, note) => db.addKhataPayment(customerId, amount, note));
   ipcMain.handle('db:addKhataCustomer', (_, name, mobile) => db.addKhataCustomer(name, mobile));
 
-  // Distributors
+  // Distributors & Purchases (Wholesale)
   ipcMain.handle('db:getDistributors', () => db.getDistributors());
   ipcMain.handle('db:addDistributor', (_, data) => db.addDistributor(data));
+  ipcMain.handle('db:updateDistributor', (_, id, data) => db.updateDistributor(id, data));
+  ipcMain.handle('db:deleteDistributor', (_, id) => db.deleteDistributor(id));
+  ipcMain.handle('db:getPurchases', (_, limit) => db.getPurchases(limit));
+  ipcMain.handle('db:getPurchaseDetails', (_, purchaseId) => db.getPurchaseDetails(purchaseId));
+  ipcMain.handle('db:createPurchase', (_, purchaseData, items) => db.createPurchase(purchaseData, items));
+  ipcMain.handle('db:getDistributorLedger', (_, distributorId) => db.getDistributorLedger(distributorId));
+  ipcMain.handle('db:addDistributorPayment', (_, distributorId, amount, paymentMode, referenceNo, note) => db.addDistributorPayment(distributorId, amount, paymentMode, referenceNo, note));
+  ipcMain.handle('db:getPurchaseSummary', () => db.getPurchaseSummary());
 
   // System Utilities
   ipcMain.handle('sys:openExternalUrl', async (_, url) => {
