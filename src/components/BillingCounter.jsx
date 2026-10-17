@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Search,
   Barcode,
@@ -24,10 +24,29 @@ import {
   PauseCircle,
   PlayCircle,
   Clock,
-  Check
+  Check,
+  ArrowRightLeft,
+  Calendar,
+  Building2,
+  HelpCircle,
+  FileText
 } from 'lucide-react';
 import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
+
+// Helper to create an empty multi-bill slot (Slots 1 to 10)
+const createEmptySlot = (id) => ({
+  id,
+  cart: [],
+  customerMobile: '',
+  customerName: '',
+  customerAddress: '',
+  doctorName: '',
+  doctorRegNo: '',
+  discount: 0,
+  paymentMode: 'cash',
+  existingKhataBalance: null
+});
 
 export default function BillingCounter({ currentUser, featureToggles, storeProfile }) {
   const allowKhata = featureToggles?.allow_khata !== false && featureToggles?.allow_khata !== 'false' && featureToggles?.allow_khata !== 0;
@@ -37,35 +56,53 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
   const isCashier = currentUser?.role?.toLowerCase() === 'cashier';
   const maxCashierDiscount = Number(featureToggles?.max_cashier_discount ?? 10);
 
+  // 10-Slot Multi-Bill State (MediVision Parity: Slots 1 to 10)
+  const [slots, setSlots] = useState(() => {
+    try {
+      const saved = localStorage.getItem('gaavpharma_counter_slots_10');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length === 10) return parsed;
+      }
+    } catch (e) {}
+    return Array.from({ length: 10 }, (_, i) => createEmptySlot(i + 1));
+  });
+  const [activeSlotIdx, setActiveSlotIdx] = useState(0); // 0 to 9
+
+  // Active Slot Derived State
+  const activeSlot = slots[activeSlotIdx] || slots[0];
+  const cart = activeSlot.cart || [];
+  const paymentMode = activeSlot.paymentMode || 'cash';
+  const discount = activeSlot.discount || 0;
+  const customerMobile = activeSlot.customerMobile || '';
+  const customerName = activeSlot.customerName || '';
+  const customerAddress = activeSlot.customerAddress || '';
+  const doctorName = activeSlot.doctorName || '';
+  const doctorRegNo = activeSlot.doctorRegNo || '';
+  const existingKhataBalance = activeSlot.existingKhataBalance;
+
+  // Search & Autocomplete State (Stage 1)
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [isSearching, setIsSearching] = useState(false);
   const [substitutesModal, setSubstitutesModal] = useState(null);
 
-  // Cart state
-  const [cart, setCart] = useState([]);
-  const [paymentMode, setPaymentMode] = useState('cash'); // 'cash' | 'upi' | 'khata' | 'card'
-  const [discount, setDiscount] = useState(0);
+  // MediVision Stage 2: "Available Stock" Dedicated Batch Selection Modal
+  const [batchSelectModal, setBatchSelectModal] = useState(null);
+  // shape: { product, batches: [], selectedIndex: 0, qty: 1, isLoose: false }
 
-  // Customer / Doctor Details (FDA Schedule H1 Rule 65)
-  const [customerMobile, setCustomerMobile] = useState('');
-  const [customerName, setCustomerName] = useState('');
-  const [customerAddress, setCustomerAddress] = useState('');
-  const [doctorName, setDoctorName] = useState('');
-  const [doctorRegNo, setDoctorRegNo] = useState('');
-  const [existingKhataBalance, setExistingKhataBalance] = useState(null);
+  // MediVision Multi-Bill Item Shift Modal ("Shift Item?")
+  const [shiftItemModal, setShiftItemModal] = useState(null);
+  // shape: { itemIndex: number, targetSlot: number }
 
-  // Peak Hour "Hold & Resume" State (F6)
-  const [heldBills, setHeldBills] = useState(() => {
-    try {
-      const saved = localStorage.getItem('gaavpharma_held_bills');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
-  const [showHeldModal, setShowHeldModal] = useState(false);
+  // Live Bottom Inspector Product Focus
+  const [focusedProduct, setFocusedProduct] = useState(null);
+
+  // Live Bottom Expiry Radar Ticker Items
+  const [expiryTickerItems, setExpiryTickerItems] = useState([]);
+
+  // Shortage notification toast
   const [shortageToast, setShortageToast] = useState(null);
 
   // Receipt Modal
@@ -75,20 +112,68 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
   const lastKeyTimeRef = useRef(0);
   const searchInputRef = useRef(null);
   const customerMobileRef = useRef(null);
+  const batchQtyInputRef = useRef(null);
 
-  // Global Barcode Scanner Listener & Hotkeys
+  // Persist slots to localStorage on change
+  useEffect(() => {
+    try {
+      localStorage.setItem('gaavpharma_counter_slots_10', JSON.stringify(slots));
+    } catch (e) {}
+  }, [slots]);
+
+  // Load Expiry Ticker Items on Mount
+  useEffect(() => {
+    api.getExpiryRadarData().then((res) => {
+      if (res && res.batches) {
+        const sorted = [...res.batches]
+          .filter((b) => b.status === 'critical' || b.status === 'warning')
+          .sort((a, b) => (a.daysRemaining || 0) - (b.daysRemaining || 0));
+        setExpiryTickerItems(sorted.slice(0, 15));
+      }
+    }).catch((e) => console.warn('Ticker load error:', e));
+  }, []);
+
+  // Update current slot helper
+  const updateActiveSlot = (updater) => {
+    setSlots((prevSlots) => {
+      const next = [...prevSlots];
+      const cur = next[activeSlotIdx];
+      next[activeSlotIdx] = typeof updater === 'function' ? updater(cur) : { ...cur, ...updater };
+      return next;
+    });
+  };
+
+  // Keyboard Shortcuts (F-Keys, Alt+1..0 for Slots, Enter-Flow)
   useEffect(() => {
     const handleKeyDown = async (e) => {
       const isCtrlOrMeta = e.ctrlKey || e.metaKey;
 
-      // F2 or Ctrl+N: New Bill
+      // Alt + 1 through Alt + 9, Alt + 0: Switch Multi-Bill Slots
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        const keyNum = parseInt(e.key, 10);
+        if (!isNaN(keyNum)) {
+          e.preventDefault();
+          const targetSlotIdx = keyNum === 0 ? 9 : keyNum - 1;
+          setActiveSlotIdx(targetSlotIdx);
+          return;
+        }
+      }
+
+      // F2 or Ctrl+N: Clear Current Slot / New Bill
       if (e.key === 'F2' || (isCtrlOrMeta && (e.key === 'n' || e.key === 'N'))) {
         e.preventDefault();
         handleNewSale();
         return;
       }
 
-      // F4 or Ctrl+F: Focus Search & Barcode
+      // F3: Cycle to Next Slot
+      if (e.key === 'F3') {
+        e.preventDefault();
+        setActiveSlotIdx((prev) => (prev + 1) % 10);
+        return;
+      }
+
+      // F4 or Ctrl+F: Focus Search Input
       if (e.key === 'F4' || (isCtrlOrMeta && (e.key === 'f' || e.key === 'F'))) {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -96,18 +181,7 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         return;
       }
 
-      // F6: Hold Bill or Show Held Bills Queue
-      if (e.key === 'F6') {
-        e.preventDefault();
-        if (cart.length > 0) {
-          handleHoldBill();
-        } else {
-          setShowHeldModal((prev) => !prev);
-        }
-        return;
-      }
-
-      // F8 or Alt+P: Cycle Payment Mode
+      // F8 or Alt+P: Cycle Payment Mode (Cash, UPI, Khata, Card)
       if (e.key === 'F8' || (e.altKey && (e.key === 'p' || e.key === 'P'))) {
         e.preventDefault();
         cyclePaymentMode();
@@ -128,9 +202,9 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         return;
       }
 
+      // Barcode Scanner Listener
       if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-      // Scanner keystroke timing
       const currentTime = Date.now();
       const diff = currentTime - lastKeyTimeRef.current;
       lastKeyTimeRef.current = currentTime;
@@ -155,16 +229,16 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cart, paymentMode, discount, customerMobile, customerName, customerAddress, doctorName, doctorRegNo, heldBills]);
+  }, [activeSlotIdx, slots, batchSelectModal, shiftItemModal]);
 
   const cyclePaymentMode = () => {
     const modes = allowKhata ? ['cash', 'upi', 'khata', 'card'] : ['cash', 'upi', 'card'];
     const currentIdx = modes.indexOf(paymentMode);
     const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % modes.length : 0;
-    setPaymentMode(modes[nextIdx]);
+    updateActiveSlot({ paymentMode: modes[nextIdx] });
   };
 
-  // Perform live search
+  // Live Search Autocomplete (Stage 1)
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (searchQuery.trim().length > 1) {
@@ -173,6 +247,9 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
           const res = await api.searchProducts(searchQuery);
           setSearchResults(res || []);
           setHighlightedIndex(0);
+          if (res && res.length > 0) {
+            setFocusedProduct(res[0]);
+          }
         } catch (err) {
           console.error(err);
         } finally {
@@ -182,30 +259,33 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         setSearchResults([]);
         setHighlightedIndex(0);
       }
-    }, 120);
+    }, 100);
 
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  // Stage 1 Keyboard Navigation in Search Input
   const handleSearchInputKeyDown = (e) => {
     if (searchResults.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setHighlightedIndex((prev) => (prev + 1) % searchResults.length);
+        const nextIdx = (highlightedIndex + 1) % searchResults.length;
+        setHighlightedIndex(nextIdx);
+        setFocusedProduct(searchResults[nextIdx]);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setHighlightedIndex((prev) => (prev - 1 + searchResults.length) % searchResults.length);
+        const prevIdx = (highlightedIndex - 1 + searchResults.length) % searchResults.length;
+        setHighlightedIndex(prevIdx);
+        setFocusedProduct(searchResults[prevIdx]);
         return;
       }
       if (e.key === 'Enter') {
         e.preventDefault();
         const selectedProd = searchResults[highlightedIndex] || searchResults[0];
         if (selectedProd) {
-          addItemToCart(selectedProd, false);
-          setSearchQuery('');
-          setSearchResults([]);
+          openBatchSelectionModal(selectedProd);
         }
         return;
       }
@@ -217,28 +297,138 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     }
   };
 
-  // Khata balance lookup
-  useEffect(() => {
-    if (customerMobile.length === 10) {
-      api.getKhataCustomers().then((custs) => {
-        const found = custs.find((c) => c.mobile === customerMobile);
-        if (found) {
-          setCustomerName(found.name);
-          setExistingKhataBalance(found.balance);
-        } else {
-          setExistingKhataBalance(null);
-        }
-      });
-    } else {
-      setExistingKhataBalance(null);
+  // Stage 2: Open "Available Stock" Dedicated Batch Selection Modal
+  const openBatchSelectionModal = (product) => {
+    const rawBatches = product.batches || [];
+    if (rawBatches.length === 0) {
+      alert(`"${product.name}" चा औषध साठा संपलेला आहे (Out of Stock).`);
+      return;
     }
-  }, [customerMobile]);
 
+    // Sort batches by earliest expiry (FEFO)
+    const sortedBatches = [...rawBatches].sort((a, b) => {
+      const parseDate = (d) => {
+        if (!d) return 999999;
+        const parts = d.split('/');
+        if (parts.length === 2) return parseInt(parts[1], 10) * 100 + parseInt(parts[0], 10);
+        return 999999;
+      };
+      return parseDate(a.expiry_date) - parseDate(b.expiry_date);
+    });
+
+    setBatchSelectModal({
+      product,
+      batches: sortedBatches,
+      selectedIndex: 0,
+      qty: 1,
+      isLoose: false
+    });
+    setFocusedProduct(product);
+    setSearchQuery('');
+    setSearchResults([]);
+
+    // Auto-focus quantity input slightly after modal renders
+    setTimeout(() => {
+      batchQtyInputRef.current?.focus();
+      batchQtyInputRef.current?.select();
+    }, 80);
+  };
+
+  // Confirm Batch Selection & Add Item to Active Slot Cart
+  const confirmBatchSelection = () => {
+    if (!batchSelectModal) return;
+    const { product, batches, selectedIndex, qty, isLoose } = batchSelectModal;
+    const selectedBatch = batches[selectedIndex] || batches[0];
+
+    if (!selectedBatch) {
+      setBatchSelectModal(null);
+      return;
+    }
+
+    const validQty = Math.max(1, parseInt(qty, 10) || 1);
+    const stripSize = product.strip_size || 10;
+    const unitPrice = isLoose
+      ? Math.round((selectedBatch.mrp / stripSize) * 100) / 100
+      : selectedBatch.mrp;
+
+    const existingIndex = cart.findIndex(
+      (item) =>
+        item.product_id === product.id &&
+        item.batch_id === selectedBatch.id &&
+        item.is_loose_tablet === isLoose
+    );
+
+    if (existingIndex > -1) {
+      const updatedCart = [...cart];
+      updatedCart[existingIndex].qty += validQty;
+      updatedCart[existingIndex].total_price = Number(
+        (updatedCart[existingIndex].qty * updatedCart[existingIndex].unit_price).toFixed(2)
+      );
+      updateActiveSlot({ cart: updatedCart });
+    } else {
+      const newItem = {
+        product_id: product.id,
+        product_name: product.name,
+        generic_salt: product.generic_salt,
+        category: product.category,
+        company: product.company || 'Micro Labs',
+        rack_location: product.rack_location || 'Rack A-1',
+        strip_size: stripSize,
+        is_schedule_h1: product.is_schedule_h1,
+        batch_id: selectedBatch.id,
+        batch_no: selectedBatch.batch_no,
+        expiry_date: selectedBatch.expiry_date,
+        all_batches: batches,
+        is_loose_tablet: isLoose,
+        qty: validQty,
+        unit_price: unitPrice,
+        total_price: Number((unitPrice * validQty).toFixed(2))
+      };
+      updateActiveSlot({ cart: [newItem, ...cart] });
+    }
+
+    setBatchSelectModal(null);
+    searchInputRef.current?.focus();
+  };
+
+  // Multi-Bill Item Shift Handlers (Photo 22: "Shift Item?")
+  const openShiftItemDialog = (itemIndex) => {
+    // Pick the first available alternate slot
+    const target = slots.find((_, idx) => idx !== activeSlotIdx)?.id || 1;
+    setShiftItemModal({ itemIndex, targetSlot: target });
+  };
+
+  const confirmShiftItem = () => {
+    if (!shiftItemModal) return;
+    const { itemIndex, targetSlot } = shiftItemModal;
+    const itemToMove = cart[itemIndex];
+    if (!itemToMove) {
+      setShiftItemModal(null);
+      return;
+    }
+
+    const targetIdx = targetSlot - 1;
+    setSlots((prevSlots) => {
+      const next = [...prevSlots];
+      // 1. Remove from active slot
+      const sourceCart = next[activeSlotIdx].cart.filter((_, idx) => idx !== itemIndex);
+      next[activeSlotIdx] = { ...next[activeSlotIdx], cart: sourceCart };
+
+      // 2. Add to target slot
+      const destCart = [itemToMove, ...(next[targetIdx].cart || [])];
+      next[targetIdx] = { ...next[targetIdx], cart: destCart };
+      return next;
+    });
+
+    setShiftItemModal(null);
+  };
+
+  // Barcode Scanner Handler
   const handleBarcodeScan = async (barcode) => {
     try {
       const prod = await api.getProductByBarcode(barcode);
       if (prod) {
-        addItemToCart(prod, false);
+        openBatchSelectionModal(prod);
       } else {
         alert(`Barcode not found in catalog: ${barcode}`);
       }
@@ -247,84 +437,26 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     }
   };
 
-  const addItemToCart = (product, isLoose = false) => {
-    const batches = product.batches || [];
-    const activeBatch = batches.length > 0 ? batches[0] : null;
-
-    if (!activeBatch) {
-      alert(`No stock available for ${product.name}`);
-      return;
-    }
-
-    const existingIndex = cart.findIndex(
-      (item) =>
-        item.product_id === product.id &&
-        item.batch_id === activeBatch.id &&
-        item.is_loose_tablet === isLoose
-    );
-
-    const stripSize = product.strip_size || 10;
-    const unitPrice = isLoose
-      ? Math.round((activeBatch.mrp / stripSize) * 100) / 100
-      : activeBatch.mrp;
-
-    if (existingIndex > -1) {
-      const updated = [...cart];
-      updated[existingIndex].qty += 1;
-      updated[existingIndex].total_price = Number(
-        (updated[existingIndex].qty * updated[existingIndex].unit_price).toFixed(2)
-      );
-      setCart(updated);
-    } else {
-      const initialQty = isLoose ? Math.min(4, stripSize) : 1;
-      const newItem = {
-        product_id: product.id,
-        product_name: product.name,
-        generic_salt: product.generic_salt,
-        category: product.category,
-        rack_location: product.rack_location,
-        strip_size: stripSize,
-        is_schedule_h1: product.is_schedule_h1,
-        batch_id: activeBatch.id,
-        batch_no: activeBatch.batch_no,
-        expiry_date: activeBatch.expiry_date,
-        all_batches: batches,
-        is_loose_tablet: isLoose,
-        qty: initialQty,
-        unit_price: unitPrice,
-        total_price: Number((unitPrice * initialQty).toFixed(2))
-      };
-      setCart([newItem, ...cart]);
-    }
-
-    setSearchQuery('');
-    setSearchResults([]);
-    searchInputRef.current?.focus();
-  };
-
-  const handleQuickAddShortage = async (product) => {
-    try {
-      const medicineName = product.name || product.medicine_name || searchQuery.trim();
-      if (!medicineName) return;
-      await api.addShortageItem({
-        product_id: product.id || null,
-        medicine_name: medicineName,
-        generic_salt: product.generic_salt || '',
-        current_stock: product.total_stock || 0,
-        min_stock_alert: product.min_stock_alert || 10,
-        suggested_qty: 10,
-        source: 'CUSTOMER_DEMAND',
-        notes: 'Walk-in customer demanded at counter'
+  // Khata Balance Lookup by Mobile
+  useEffect(() => {
+    if (customerMobile.length === 10) {
+      api.getKhataCustomers().then((custs) => {
+        const found = custs.find((c) => c.mobile === customerMobile);
+        if (found) {
+          updateActiveSlot({
+            customerName: found.name,
+            existingKhataBalance: found.balance
+          });
+        } else {
+          updateActiveSlot({ existingKhataBalance: null });
+        }
       });
-      setShortageToast(`"${medicineName}" तोटा नोंदवहीत जोडले! (Added to Shortage Diary)`);
-      setTimeout(() => setShortageToast(null), 3500);
-      setSearchQuery('');
-      setSearchResults([]);
-    } catch (err) {
-      console.error('Error adding shortage item:', err);
+    } else {
+      updateActiveSlot({ existingKhataBalance: null });
     }
-  };
+  }, [customerMobile]);
 
+  // Cart Qty Helpers
   const updateCartItemQty = (index, delta) => {
     const updated = [...cart];
     const newQty = updated[index].qty + delta;
@@ -334,7 +466,7 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     }
     updated[index].qty = newQty;
     updated[index].total_price = Number((newQty * updated[index].unit_price).toFixed(2));
-    setCart(updated);
+    updateActiveSlot({ cart: updated });
   };
 
   const setCartItemDirectQty = (index, val) => {
@@ -343,113 +475,16 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     const updated = [...cart];
     updated[index].qty = parsed;
     updated[index].total_price = Number((parsed * updated[index].unit_price).toFixed(2));
-    setCart(updated);
-  };
-
-  const switchBatch = (index, newBatchId) => {
-    const updated = [...cart];
-    const item = updated[index];
-    const foundBatch = item.all_batches.find((b) => b.id === Number(newBatchId));
-    if (foundBatch) {
-      item.batch_id = foundBatch.id;
-      item.batch_no = foundBatch.batch_no;
-      item.expiry_date = foundBatch.expiry_date;
-      item.unit_price = item.is_loose_tablet
-        ? Math.round((foundBatch.mrp / item.strip_size) * 100) / 100
-        : foundBatch.mrp;
-      item.total_price = Number((item.qty * item.unit_price).toFixed(2));
-      setCart(updated);
-    }
-  };
-
-  const toggleLooseTabletMode = (index) => {
-    const updated = [...cart];
-    const item = updated[index];
-    const newIsLoose = !item.is_loose_tablet;
-    item.is_loose_tablet = newIsLoose;
-    const baseMrp = item.all_batches[0]?.mrp || item.unit_price;
-    item.unit_price = newIsLoose
-      ? Math.round((baseMrp / item.strip_size) * 100) / 100
-      : baseMrp;
-    item.total_price = Number((item.qty * item.unit_price).toFixed(2));
-    setCart(updated);
+    updateActiveSlot({ cart: updated });
   };
 
   const removeCartItem = (index) => {
-    setCart(cart.filter((_, i) => i !== index));
+    updateActiveSlot({ cart: cart.filter((_, i) => i !== index) });
   };
 
   const handleNewSale = () => {
-    setCart([]);
-    setCustomerMobile('');
-    setCustomerName('');
-    setCustomerAddress('');
-    setDoctorName('');
-    setDoctorRegNo('');
-    setDiscount(0);
-    setPaymentMode('cash');
-    setExistingKhataBalance(null);
+    updateActiveSlot(createEmptySlot(activeSlot.id));
     searchInputRef.current?.focus();
-  };
-
-  // Peak Hour "Hold & Resume" Handlers (F6)
-  const handleHoldBill = () => {
-    if (cart.length === 0) {
-      setShowHeldModal(true);
-      return;
-    }
-    const newHeld = {
-      id: 'HOLD-' + Date.now(),
-      heldAt: new Date().toISOString(),
-      customerName: customerName.trim() || 'Cash Customer',
-      customerMobile: customerMobile.trim() || '',
-      customerAddress: customerAddress.trim() || '',
-      doctorName: doctorName.trim() || '',
-      doctorRegNo: doctorRegNo.trim() || '',
-      cart: [...cart],
-      discount,
-      paymentMode,
-      totalAmount: netPayable
-    };
-    const updated = [newHeld, ...heldBills];
-    setHeldBills(updated);
-    try {
-      localStorage.setItem('gaavpharma_held_bills', JSON.stringify(updated));
-    } catch (e) {}
-    handleNewSale();
-    alert(`Bill for "${newHeld.customerName}" held safely (F6). Counter is now cleared for next customer!`);
-  };
-
-  const handleResumeBill = (held) => {
-    if (cart.length > 0) {
-      if (!window.confirm('Current active bill has items. Replace with this held bill?')) {
-        return;
-      }
-    }
-    setCart(held.cart || []);
-    setCustomerName(held.customerName || '');
-    setCustomerMobile(held.customerMobile || '');
-    setCustomerAddress(held.customerAddress || '');
-    setDoctorName(held.doctorName || '');
-    setDoctorRegNo(held.doctorRegNo || '');
-    setDiscount(held.discount || 0);
-    setPaymentMode(held.paymentMode || 'cash');
-
-    const updated = heldBills.filter((h) => h.id !== held.id);
-    setHeldBills(updated);
-    try {
-      localStorage.setItem('gaavpharma_held_bills', JSON.stringify(updated));
-    } catch (e) {}
-    setShowHeldModal(false);
-  };
-
-  const handleDiscardHeldBill = (id) => {
-    if (!window.confirm('Discard this held bill permanently?')) return;
-    const updated = heldBills.filter((h) => h.id !== id);
-    setHeldBills(updated);
-    try {
-      localStorage.setItem('gaavpharma_held_bills', JSON.stringify(updated));
-    } catch (e) {}
   };
 
   // Calculations
@@ -462,26 +497,27 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
       const maxVal = (subtotal * maxCashierDiscount) / 100;
       if (num > maxVal + 0.01) {
         alert(`Cashier discount is capped at ${maxCashierDiscount}% (₹${maxVal.toFixed(2)}) by Store Admin policy.`);
-        setDiscount(Number(maxVal.toFixed(2)));
+        updateActiveSlot({ discount: Number(maxVal.toFixed(2)) });
         return;
       }
     }
-    setDiscount(val);
+    updateActiveSlot({ discount: val });
   };
 
+  // Checkout & Sale Completion
   const handleCompleteSale = async () => {
     if (cart.length === 0) {
-      alert('Cannot checkout: Bill is empty.');
+      alert('बिलामध्ये एकही औषध नाही (Cart is empty).');
       return;
     }
 
     if (paymentMode === 'khata') {
       if (!allowKhata) {
-        alert('Khata credit billing is currently disabled by Store Admin settings.');
+        alert('उधारी खाते (Khata Credit) बिलिंग ॲडमिनद्वारे बंद आहे.');
         return;
       }
       if (!customerMobile) {
-        alert('Customer mobile number is mandatory for Khata credit billing.');
+        alert('उधारी बिलासाठी ग्राहकाचा १०-अंकी मोबाईल नंबर आवश्यक आहे.');
         return;
       }
     }
@@ -491,19 +527,10 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     if (hasH1Item && enforceH1Doctor && !doctorName.trim()) {
       alert(
         '⚠️ Schedule H1 Compliance:\n' +
-        'This bill contains Schedule H1 medicines (e.g. Augmentin / Azithromycin).\n' +
-        'Doctor\'s Name is strictly required under Drugs & Cosmetics Rules.'
+        'या बिलामध्ये शेड्यूल H1 औषधे समाविष्ट आहेत.\n' +
+        'डॉक्टरांचे नाव (Doctor Name) प्रविष्ट करणे कायद्यानुसार बंधनकारक आहे.'
       );
       return;
-    }
-
-    // Cashier Discount Limit Enforcement
-    if (isCashier && subtotal > 0) {
-      const maxVal = (subtotal * maxCashierDiscount) / 100;
-      if ((parseFloat(discount) || 0) > maxVal + 0.05) {
-        alert(`Cashier discount cannot exceed ${maxCashierDiscount}% (₹${maxVal.toFixed(2)}).`);
-        return;
-      }
     }
 
     try {
@@ -521,12 +548,16 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
       const result = await api.createInvoice(invoiceData, cart);
       setCompletedInvoice(result);
+
+      // Clear current active slot upon successful sale
+      handleNewSale();
     } catch (err) {
       console.error('Invoice error:', err);
-      alert('Failed to process invoice.');
+      alert('बिल पूर्ण करताना त्रुटी आली: ' + err.message);
     }
   };
 
+  // Fast Substitute Lookup
   const viewSubstitutes = async (prod, e) => {
     e.stopPropagation();
     try {
@@ -537,13 +568,95 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     }
   };
 
+  // Bottom Inspector Info (Fallback to first cart item or default)
+  const inspectorData = useMemo(() => {
+    if (focusedProduct) {
+      return {
+        drug: focusedProduct.generic_salt || 'Paracetamol 650mg',
+        shelf: focusedProduct.rack_location || 'Rack A-1',
+        comp: focusedProduct.company || 'Micro Labs',
+        pack: `${focusedProduct.strip_size || 10} TAB`,
+        batchQty: focusedProduct.batches?.[0]?.stock_qty || 0,
+        totalQty: focusedProduct.total_stock || 0
+      };
+    }
+    if (cart.length > 0) {
+      const top = cart[0];
+      return {
+        drug: top.generic_salt || 'Paracetamol 650mg',
+        shelf: top.rack_location || 'Rack A-1',
+        comp: top.company || 'Micro Labs',
+        pack: `${top.strip_size || 10} TAB`,
+        batchQty: top.qty,
+        totalQty: top.qty
+      };
+    }
+    return {
+      drug: 'काउंटर तयार आहे (Ready for billing)',
+      shelf: 'Rack A-1',
+      comp: storeProfile?.store_name || 'Divya Medical Stores',
+      pack: '10 TAB',
+      batchQty: 0,
+      totalQty: 0
+    };
+  }, [focusedProduct, cart, storeProfile]);
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-50 overflow-hidden select-none">
-      {/* Top Search & Command Bar */}
-      <div className="p-3 bg-white border-b border-slate-200 shadow-xs flex items-center justify-between gap-4 shrink-0">
-        <div className="relative flex-1 max-w-2xl">
+    <div className="flex-1 flex flex-col h-full bg-slate-900 text-slate-100 overflow-hidden select-none font-sans">
+      
+      {/* 1. TOP MULTI-BILL HOLD BAR (MediVision Parity: Slots 1 to 10) */}
+      <div className="flex items-center space-x-1.5 overflow-x-auto py-1.5 px-3 bg-slate-950 border-b border-slate-800 text-xs shrink-0">
+        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1 shrink-0 flex items-center gap-1">
+          <Layers className="w-3.5 h-3.5 text-blue-400" />
+          <span>SLOTS:</span>
+        </span>
+
+        {slots.map((s, idx) => {
+          const isActive = idx === activeSlotIdx;
+          const count = s.cart.reduce((sum, item) => sum + item.qty, 0);
+          const total = s.cart.reduce((sum, item) => sum + item.total_price, 0);
+          return (
+            <button
+              key={s.id}
+              onClick={() => setActiveSlotIdx(idx)}
+              className={`flex items-center space-x-1.5 px-3 py-1 rounded-md text-xs font-mono transition-all select-none shrink-0 ${
+                isActive
+                  ? 'bg-blue-600 text-white font-bold shadow-md shadow-blue-900/50 ring-1 ring-blue-400'
+                  : count > 0
+                    ? 'bg-slate-800 text-emerald-400 hover:bg-slate-700 border border-emerald-500/40 font-semibold'
+                    : 'bg-slate-850 text-slate-400 hover:bg-slate-800 border border-slate-800'
+              }`}
+              title={`Alt+${(idx + 1) % 10} to jump to Slot ${s.id}`}
+            >
+              <span>{s.id}</span>
+              {count > 0 && (
+                <span className={`text-[10px] px-1 py-0.2 rounded font-bold ${
+                  isActive ? 'bg-blue-800 text-blue-100' : 'bg-emerald-950 text-emerald-300'
+                }`}>
+                  ₹{total.toFixed(0)} ({count})
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        {/* Live Active Slot Running Total Display (Photo 7: "3 => 0.00") */}
+        <div className="ml-auto flex items-center space-x-3 text-xs shrink-0">
+          <div className="px-3 py-1 rounded-md bg-blue-950/80 border border-blue-500/60 text-blue-300 font-mono font-bold text-xs flex items-center space-x-2">
+            <span>Slot {activeSlotIdx + 1} =&gt;</span>
+            <span className="text-white text-sm">₹{netPayable.toFixed(2)}</span>
+          </div>
+          <span className="text-[10px] text-slate-400 font-mono hidden lg:inline">
+            Alt+1..0: Slots • Alt+P: Mode • F9: Print
+          </span>
+        </div>
+      </div>
+
+      {/* 2. TOP FAST SEARCH & MEDICINE AUTOCOMPLETE BAR (Stage 1) */}
+      <div className="p-2.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
+        <div className="relative flex-1">
           <div className="relative flex items-center">
-            <Search className="w-4 h-4 absolute left-3.5 text-slate-400" />
+            <Search className="w-4 h-4 absolute left-3.5 text-blue-400" />
             <input
               ref={searchInputRef}
               type="text"
@@ -551,318 +664,175 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={handleSearchInputKeyDown}
               placeholder="औषध शोधा किंवा बारकोड स्कॅन करा... (F4)"
-              className="w-full pl-10 pr-28 py-2 bg-slate-50 hover:bg-slate-100/60 focus:bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-900 placeholder-slate-400 focus:border-emerald-600 transition-all"
+              className="w-full pl-10 pr-32 py-2 bg-slate-800 hover:bg-slate-750 focus:bg-slate-800 border border-slate-700 rounded-lg text-xs font-medium text-white placeholder-slate-400 focus:border-blue-500 transition-all font-mono"
               autoFocus
             />
             <div className="absolute right-2.5 flex items-center space-x-1.5 text-xs text-slate-400 font-mono">
-              <span className="bg-slate-100 text-slate-500 border border-slate-200/80 px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1">
-                <Barcode className="w-3 h-3 text-slate-400" /> ↑↓ नेव्हिगेट • Enter निवडा
+              <span className="bg-slate-700/60 text-slate-300 border border-slate-600/60 px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1">
+                <Barcode className="w-3 h-3 text-blue-400" /> ↑↓ नेव्हिगेट • Enter बॅच निवडा
               </span>
             </div>
           </div>
 
-          {/* Instant Search Results Dropdown */}
+          {/* Instant Search Dropdown (Stage 1: Photo 14) */}
           {searchResults.length > 0 && (
-            <div className="absolute left-0 right-0 mt-1.5 bg-white rounded-xl shadow-xl border border-slate-200 max-h-96 overflow-y-auto z-40 divide-y divide-slate-100 animate-in fade-in duration-100">
+            <div className="absolute left-0 right-0 mt-1 bg-slate-800 rounded-xl shadow-2xl border border-slate-700 max-h-80 overflow-y-auto z-40 divide-y divide-slate-700/80 animate-in fade-in duration-100 font-mono">
               {searchResults.map((prod, idx) => {
                 const totalStock = prod.total_stock || 0;
-                const activeBatch = prod.active_batch;
-                const isOutOfStock = totalStock <= 0;
                 const isHighlighted = highlightedIndex === idx;
 
                 return (
                   <div
                     key={prod.id}
-                    className={`p-3 transition-colors flex items-center justify-between cursor-pointer group ${
+                    className={`p-2.5 transition-colors flex items-center justify-between cursor-pointer ${
                       isHighlighted
-                        ? 'bg-emerald-50/90 border-l-4 border-emerald-600 pl-2.5 ring-1 ring-emerald-300'
-                        : 'hover:bg-slate-50'
+                        ? 'bg-blue-600 text-white font-bold ring-1 ring-blue-300'
+                        : 'hover:bg-slate-700/70 text-slate-200'
                     }`}
-                    onClick={() => addItemToCart(prod, false)}
+                    onClick={() => openBatchSelectionModal(prod)}
                   >
                     <div className="flex-1 pr-3">
                       <div className="flex items-center space-x-2">
-                        <span className="font-semibold text-xs text-slate-900 group-hover:text-emerald-700">
+                        <span className="font-semibold text-xs tracking-wide">
                           {prod.name}
                         </span>
-                        <span className="rack-chip">
-                          <MapPin className="w-2.5 h-2.5 text-slate-400" />
-                          {prod.rack_location || 'General'}
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-900/60 text-amber-300 border border-amber-500/30 font-mono">
+                          {prod.rack_location || 'Rack A-1'}
                         </span>
                         {prod.is_schedule_h1 ? (
-                          <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200">
-                            Schedule H1
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-950 text-rose-300 border border-rose-700">
+                            H1
                           </span>
                         ) : null}
-                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-mono uppercase">
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-900/60 text-slate-300 uppercase">
                           {prod.category}
                         </span>
                       </div>
 
                       {prod.generic_salt && (
-                        <div className="text-[11px] text-slate-500 font-normal truncate max-w-md mt-0.5">
-                          {prod.generic_salt}
-                          {prod.strip_size > 1 && (
-                            <span className="text-slate-400 ml-1.5 font-mono">
-                              ({prod.strip_size} tabs/strip)
-                            </span>
-                          )}
-                        </div>
-                      )}
-
-                      {activeBatch && (
-                        <div className="text-[10px] text-slate-500 font-mono mt-1 flex items-center space-x-2">
-                          <span>Batch: <b className="text-slate-700">{activeBatch.batch_no}</b></span>
-                          <span className="text-slate-300">•</span>
-                          <span>Exp: <b className="text-slate-700">{activeBatch.expiry_date}</b></span>
-                          <span className="text-slate-300">•</span>
-                          <span>MRP: <b className="text-slate-900">₹{Number(activeBatch.mrp).toFixed(2)}</b></span>
-                          <span className="text-slate-300">•</span>
-                          <span>Stock: <b className="text-emerald-700">{totalStock}</b></span>
+                        <div className="text-[10px] text-slate-300 font-normal truncate max-w-lg mt-0.5">
+                          {prod.generic_salt} ({prod.strip_size || 10} tabs/strip)
                         </div>
                       )}
                     </div>
 
-                    <div className="flex items-center space-x-1.5 shrink-0">
-                      {prod.generic_salt && (
-                        <button
-                          onClick={(e) => viewSubstitutes(prod, e)}
-                          className="px-2.5 py-1 text-[11px] font-medium rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors"
-                        >
-                          Substitutes
-                        </button>
-                      )}
-
-                      {allowLooseTablets && prod.category === 'medicine' && prod.strip_size > 1 && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            addItemToCart(prod, true);
-                          }}
-                          className="px-2.5 py-1 text-[11px] font-medium rounded border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100 text-emerald-800 flex items-center gap-1 transition-colors"
-                        >
-                          <Scissors className="w-3 h-3 text-emerald-600" />
-                          <span>Cut Tabs</span>
-                        </button>
-                      )}
-
-                      {isOutOfStock ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleQuickAddShortage(prod);
-                          }}
-                          className="px-2.5 py-1 rounded-md text-xs font-semibold flex items-center space-x-1 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 shadow-2xs transition-colors"
-                          title="ग्राहक मागणी / तोटा नोंदवहीत नोंदवा"
-                        >
-                          <BookMarked className="w-3.5 h-3.5 text-amber-600" />
-                          <span>+ तोटा नोंदवा</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => addItemToCart(prod, false)}
-                          className="px-3 py-1 rounded-md text-xs font-semibold flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Add Strip</span>
-                        </button>
-                      )}
+                    <div className="flex items-center space-x-3 text-xs font-mono shrink-0">
+                      <span className="text-emerald-400 font-bold">
+                        Stock: {totalStock}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-blue-950 text-blue-200 border border-blue-800">
+                        Enter बॅच निवडा &rarr;
+                      </span>
                     </div>
                   </div>
                 );
               })}
             </div>
           )}
-
-          {/* Missing Medicine Quick Shortage Banner */}
-          {searchResults.length === 0 && searchQuery.trim().length > 1 && !isSearching && (
-            <div className="absolute left-0 right-0 mt-1.5 bg-white rounded-xl shadow-xl border border-amber-300 p-3 z-40 animate-in fade-in duration-100 flex items-center justify-between">
-              <div className="flex items-center space-x-2.5">
-                <div className="p-1.5 bg-amber-100 text-amber-800 rounded-lg border border-amber-200">
-                  <AlertCircle className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-900">
-                    "{searchQuery}" नॉट इन स्टॉक / उपलब्ध नाही
-                  </div>
-                  <div className="text-[10px] text-slate-500">
-                    Walk-in customer demanded this medicine? Log it to Shortage Diary (तोटा वही).
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleQuickAddShortage({ name: searchQuery.trim(), generic_salt: '', current_stock: 0 })}
-                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition-colors"
-              >
-                <BookMarked className="w-3.5 h-3.5" />
-                <span>+ तोटा नोंदवा (Add to Shortage)</span>
-              </button>
-            </div>
-          )}
         </div>
 
-        {/* Counter Top Actions */}
-        <div className="flex items-center space-x-2 shrink-0">
-          {heldBills.length > 0 && (
-            <button
-              onClick={() => setShowHeldModal(true)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold shadow-xs transition-colors"
-            >
-              <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-              <span>Held Bills</span>
-              <span className="bg-amber-600 text-white rounded-full px-1.5 py-0.2 text-[10px] font-mono">
-                {heldBills.length}
-              </span>
-              <kbd className="text-[9px] bg-amber-200/60 text-amber-800 px-1 rounded font-mono">F6</kbd>
-            </button>
-          )}
-
-          <button
-            onClick={handleHoldBill}
-            disabled={cart.length === 0}
-            className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg border text-xs font-medium shadow-xs transition-colors ${
-              cart.length === 0
-                ? 'border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed'
-                : 'border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-800'
-            }`}
-            title="Hold current bill and clear counter for next customer (F6)"
-          >
-            <PauseCircle className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Hold Bill (F6)</span>
-          </button>
-
-          <button
-            onClick={handleNewSale}
-            className="flex items-center space-x-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium shadow-xs transition-colors"
-          >
-            <RotateCcw className="w-3 h-3 text-slate-400" />
-            <span>New Bill (F2)</span>
-          </button>
-        </div>
+        {/* Quick Clear Current Bill Button (F2) */}
+        <button
+          onClick={handleNewSale}
+          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-mono flex items-center space-x-1.5 border border-slate-700 shrink-0"
+          title="Clear current slot bill (F2)"
+        >
+          <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+          <span>New Bill (F2)</span>
+        </button>
       </div>
 
-      {/* Main Billing Workspace (Data Table + Right Dock) */}
+      {/* 3. MAIN CENTER WORKSPACE: CART TABLE & DOCK */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Side: Table of Bill Items */}
-        <div className="flex-1 flex flex-col bg-white border-r border-slate-200 overflow-hidden">
-          <div className="bg-slate-50/80 px-4 py-2 border-b border-slate-200/80 flex items-center justify-between text-xs font-medium text-slate-500">
-            <div className="flex items-center space-x-2">
-              <span className="font-semibold text-slate-700 tracking-wide">BILL ITEMS</span>
-              <span className="bg-slate-200/80 text-slate-700 px-2 py-0.2 rounded-full text-[11px] font-mono">
-                {cart.length} {cart.length === 1 ? 'item' : 'items'}
+        
+        {/* Left Side: High-Density Counter Table */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-slate-900">
+          
+          {/* Table Header Bar */}
+          <div className="bg-slate-950/70 px-4 py-2 border-b border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400">
+            <div className="flex items-center space-x-3">
+              <span className="font-bold text-white tracking-wider">
+                CUSTOMER {activeSlotIdx + 1} BILL
+              </span>
+              <span className="bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.2 rounded text-[10px] font-bold">
+                {cart.length} {cart.length === 1 ? 'ITEM' : 'ITEMS'}
               </span>
             </div>
-            <span className="text-[11px] text-slate-400">
-              High density counter mode
-            </span>
+            <div className="flex items-center space-x-2 text-[11px]">
+              <span className="text-slate-400">Total:</span>
+              <strong className="text-emerald-400 font-mono text-sm">₹{subtotal.toFixed(2)}</strong>
+            </div>
           </div>
 
-          {/* Table Container */}
+          {/* Table Body Container */}
           <div className="flex-1 overflow-y-auto">
             {cart.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 space-y-2">
-                <div className="w-12 h-12 rounded-xl bg-slate-100/80 flex items-center justify-center text-slate-400">
+              <div className="h-full flex flex-col items-center justify-center text-slate-500 p-8 space-y-2">
+                <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400">
                   <Barcode className="w-6 h-6" />
                 </div>
-                <div className="text-center">
-                  <div className="text-xs font-semibold text-slate-700">Billing Counter Ready</div>
-                  <div className="text-[11px] text-slate-400 max-w-xs mt-0.5">
-                    Scan any product barcode or type medicine name above to populate bill.
+                <div className="text-center font-mono">
+                  <div className="text-xs font-bold text-slate-300">काउंटर सज्ज आहे (Slot {activeSlotIdx + 1} Ready)</div>
+                  <div className="text-[11px] text-slate-500 max-w-sm mt-0.5">
+                    औषधाचे नाव टाईप करा (F4) किंवा बारकोड स्कॅन करा.
                   </div>
                 </div>
               </div>
             ) : (
-              <table className="w-full border-collapse text-left text-xs">
+              <table className="w-full border-collapse text-left text-xs font-mono">
                 <thead>
-                  <tr className="bg-slate-50/70 text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 font-semibold sticky top-0 z-10">
+                  <tr className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800 font-semibold sticky top-0 z-10">
                     <th className="py-2 px-3 w-8 text-center">#</th>
                     <th className="py-2 px-3 min-w-[200px]">Product & Salt</th>
-                    <th className="py-2 px-3 w-28">Rack</th>
+                    <th className="py-2 px-3 w-28">Shelf (Rack)</th>
                     <th className="py-2 px-3 w-32">Batch (FIFO)</th>
-                    <th className="py-2 px-3 w-28">Unit Mode</th>
-                    <th className="py-2 px-3 w-28 text-center">Quantity</th>
-                    <th className="py-2 px-3 w-24 text-right">Unit Rate</th>
+                    <th className="py-2 px-3 w-24">Exp</th>
+                    <th className="py-2 px-3 w-20 text-center">Qty</th>
+                    <th className="py-2 px-3 w-24 text-right">Unit MRP</th>
                     <th className="py-2 px-3 w-28 text-right">Amount (₹)</th>
+                    <th className="py-2 px-3 w-24 text-center">Shift</th>
                     <th className="py-2 px-3 w-8 text-center"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                <tbody className="divide-y divide-slate-800/80 text-[11px]">
                   {cart.map((item, idx) => (
                     <tr
                       key={`${item.product_id}-${item.batch_id}-${item.is_loose_tablet}`}
-                      className="hover:bg-slate-50/70 transition-colors"
+                      onMouseEnter={() => setFocusedProduct(item)}
+                      className="hover:bg-slate-800/60 transition-colors"
                     >
-                      <td className="py-2 px-3 text-center text-slate-400 text-[10px]">{idx + 1}</td>
+                      <td className="py-2 px-3 text-center text-slate-500 text-[10px]">{idx + 1}</td>
                       <td className="py-2 px-3 font-sans">
-                        <div className="font-semibold text-slate-900 leading-tight">
+                        <div className="font-bold text-white leading-tight">
                           {item.product_name}
+                          {item.is_loose_tablet && (
+                            <span className="text-[9px] ml-1.5 px-1 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800">
+                              Loose
+                            </span>
+                          )}
                         </div>
                         {item.generic_salt && (
-                          <div className="text-[10px] text-slate-500 truncate max-w-xs font-normal mt-0.5">
+                          <div className="text-[10px] text-slate-400 truncate max-w-xs font-normal mt-0.5">
                             {item.generic_salt}
                           </div>
                         )}
                       </td>
-                      <td className="py-2 px-3 font-sans">
-                        <span className="rack-chip">
-                          <MapPin className="w-2.5 h-2.5 text-slate-400" />
-                          {item.rack_location || 'General'}
+                      <td className="py-2 px-3 font-mono">
+                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 border border-slate-700 text-[10px] font-bold">
+                          {item.rack_location || 'Rack A-1'}
                         </span>
                       </td>
-                      <td className="py-2 px-3">
-                        <select
-                          value={item.batch_id}
-                          onChange={(e) => switchBatch(idx, e.target.value)}
-                          className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-mono text-slate-800 focus:border-emerald-600"
-                        >
-                          {item.all_batches.map((b) => (
-                            <option key={b.id} value={b.id}>
-                              {b.batch_no} (Exp: {b.expiry_date})
-                            </option>
-                          ))}
-                        </select>
+                      <td className="py-2 px-3 font-bold text-slate-200">
+                        {item.batch_no}
                       </td>
-                      <td className="py-2 px-3 font-sans">
-                        {item.strip_size > 1 ? (
-                          allowLooseTablets ? (
-                            <button
-                              onClick={() => toggleLooseTabletMode(idx)}
-                              className={`text-[10px] font-medium px-2 py-0.5 rounded border transition-colors inline-flex items-center gap-1 ${
-                                item.is_loose_tablet
-                                  ? 'bg-amber-50 text-amber-800 border-amber-200'
-                                  : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                              }`}
-                            >
-                              {item.is_loose_tablet ? (
-                                <>
-                                  <Scissors className="w-2.5 h-2.5 text-amber-600" />
-                                  <span>Loose Tabs</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Package className="w-2.5 h-2.5 text-emerald-600" />
-                                  <span>Full Strip</span>
-                                </>
-                              )}
-                            </button>
-                          ) : (
-                            <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-mono">
-                              Full Strip ({item.strip_size}s)
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                            Unit Item
-                          </span>
-                        )}
+                      <td className="py-2 px-3 text-slate-300">
+                        {item.expiry_date}
                       </td>
                       <td className="py-2 px-3 text-center">
-                        <div className="inline-flex items-center border border-slate-200 rounded bg-white shadow-2xs">
+                        <div className="inline-flex items-center border border-slate-700 rounded bg-slate-800 shadow-2xs">
                           <button
                             onClick={() => updateCartItemQty(idx, -1)}
-                            className="px-2 py-0.5 text-slate-600 hover:bg-slate-100 text-xs font-semibold"
+                            className="px-2 py-0.5 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold"
                           >
                             -
                           </button>
@@ -871,26 +841,36 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                             min="1"
                             value={item.qty}
                             onChange={(e) => setCartItemDirectQty(idx, e.target.value)}
-                            className="w-10 text-center text-xs font-semibold text-slate-900 focus:outline-none"
+                            className="w-10 text-center text-xs font-bold text-white bg-transparent focus:outline-none"
                           />
                           <button
                             onClick={() => updateCartItemQty(idx, 1)}
-                            className="px-2 py-0.5 text-slate-600 hover:bg-slate-100 text-xs font-semibold"
+                            className="px-2 py-0.5 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold"
                           >
                             +
                           </button>
                         </div>
                       </td>
-                      <td className="py-2 px-3 text-right text-slate-600">
+                      <td className="py-2 px-3 text-right text-slate-300">
                         ₹{Number(item.unit_price).toFixed(2)}
                       </td>
-                      <td className="py-2 px-3 text-right font-semibold text-slate-900">
+                      <td className="py-2 px-3 text-right font-bold text-emerald-400">
                         ₹{Number(item.total_price).toFixed(2)}
                       </td>
                       <td className="py-2 px-3 text-center">
                         <button
+                          onClick={() => openShiftItemDialog(idx)}
+                          className="px-2 py-1 rounded bg-blue-950/60 hover:bg-blue-900 text-blue-300 hover:text-white border border-blue-800/80 text-[10px] font-semibold flex items-center justify-center space-x-1 mx-auto transition-colors"
+                          title="Shift item to another customer bill"
+                        >
+                          <ArrowRightLeft className="w-3 h-3 text-blue-400" />
+                          <span>Shift</span>
+                        </button>
+                      </td>
+                      <td className="py-2 px-3 text-center">
+                        <button
                           onClick={() => removeCartItem(idx)}
-                          className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors"
+                          className="text-slate-500 hover:text-rose-400 p-1 rounded hover:bg-rose-950/40 transition-colors"
                           title="Remove item"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -904,275 +884,463 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
           </div>
         </div>
 
-        {/* Right Side: Modern SaaS Checkout Dock */}
-        <div className="w-80 bg-slate-50 p-3.5 flex flex-col justify-between overflow-y-auto shrink-0 border-l border-slate-200 space-y-3">
+        {/* Right Side: High-Speed Checkout Sidebar */}
+        <div className="w-80 bg-slate-950 p-3 flex flex-col justify-between overflow-y-auto shrink-0 border-l border-slate-800 space-y-3 font-mono">
           <div className="space-y-3">
-            {/* Customer & Prescription Details (FDA Schedule H1 Compliant) */}
-            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs space-y-2.5">
-              <div className="text-[11px] font-semibold text-slate-700 uppercase tracking-wide flex items-center justify-between">
-                <span>Customer & Doctor</span>
+            
+            {/* Customer Khata & Mobile Section */}
+            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 space-y-2.5">
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
+                <span>Customer Details</span>
                 {existingKhataBalance !== null && (
-                  <span className="text-[10px] font-mono font-medium text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                  <span className="text-[10px] font-bold text-rose-300 bg-rose-950/80 px-1.5 py-0.5 rounded border border-rose-800">
                     Khata Due: ₹{existingKhataBalance.toFixed(2)}
                   </span>
                 )}
               </div>
 
-              {/* FDA Schedule H1 Alert Notice */}
-              {cart.some((it) => it.is_schedule_h1 === 1 || it.is_schedule_h1 === true) && (
-                <div className="bg-amber-50 border border-amber-300 rounded-lg p-2.5 space-y-1 text-amber-950">
-                  <div className="flex items-center space-x-1.5 font-bold text-[11px] text-amber-900">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                    <span>FDA Schedule H1 Active (Rule 65)</span>
-                  </div>
-                  <div className="text-[10px] text-amber-800 leading-tight">
-                    Prescribing Doctor & Patient Village are legally required for the statutory audit register.
-                  </div>
-                </div>
-              )}
-
               <div>
-                <label className="text-[10px] font-medium text-slate-500 mb-0.5 block">
-                  Customer Mobile Number
+                <label className="text-[10px] text-slate-400 mb-0.5 block">
+                  Mobile Number (Alt+H)
                 </label>
                 <div className="relative flex items-center">
-                  <Phone className="w-3 h-3 absolute left-2.5 text-slate-400" />
+                  <Phone className="w-3 h-3 absolute left-2.5 text-slate-500" />
                   <input
                     ref={customerMobileRef}
                     type="tel"
                     maxLength="10"
                     value={customerMobile}
-                    onChange={(e) => setCustomerMobile(e.target.value.replace(/\D/g, ''))}
-                    placeholder="10-digit mobile... (Alt+H)"
-                    className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:bg-white transition-all"
+                    onChange={(e) => updateActiveSlot({ customerMobile: e.target.value.replace(/\D/g, '') })}
+                    placeholder="10-digit mobile..."
+                    className="w-full pl-8 pr-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-xs font-mono text-white focus:border-blue-500 focus:outline-none"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-[10px] font-medium text-slate-500 mb-0.5 block">
-                  Customer / Patient Name
+                <label className="text-[10px] text-slate-400 mb-0.5 block">
+                  Customer Name
                 </label>
-                <div className="relative flex items-center">
-                  <User className="w-3 h-3 absolute left-2.5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="Cash Customer"
-                    className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-medium focus:bg-white transition-all"
-                  />
-                </div>
+                <input
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => updateActiveSlot({ customerName: e.target.value })}
+                  placeholder="Cash Customer / Name"
+                  className="w-full px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-xs font-sans text-white focus:border-blue-500 focus:outline-none"
+                />
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-0.5">
-                  <label className="text-[10px] font-medium text-slate-500 block">
-                    Patient Village / Address
-                  </label>
-                  <span className="text-[9px] text-slate-400 font-mono">FDA H1</span>
-                </div>
-                <div className="relative flex items-center">
-                  <MapPin className="w-3 h-3 absolute left-2.5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={customerAddress}
-                    onChange={(e) => setCustomerAddress(e.target.value)}
-                    placeholder="e.g. Ghoti, Igatpuri, Bhavali..."
-                    className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-medium focus:bg-white transition-all"
-                  />
-                </div>
-                <div className="flex items-center gap-1 mt-1 flex-wrap">
-                  {['Ghoti', 'Igatpuri', 'Bhavali', 'Waki', 'Kavnai'].map((v) => (
-                    <button
-                      key={v}
-                      type="button"
-                      onClick={() => setCustomerAddress(v)}
-                      className="px-1.5 py-0.5 bg-slate-100 hover:bg-slate-200 text-[9px] font-medium text-slate-600 rounded transition-colors"
-                    >
-                      {v}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-medium text-slate-500 mb-0.5 block">
-                  Prescribing Doctor {cart.some((it) => it.is_schedule_h1 === 1 || it.is_schedule_h1 === true) && <span className="text-rose-600 font-bold">*</span>}
-                </label>
-                <div className="relative flex items-center">
-                  <Stethoscope className="w-3 h-3 absolute left-2.5 text-slate-400" />
+              {/* Schedule H1 Doctor fields if required */}
+              {cart.some((it) => it.is_schedule_h1 === 1) && (
+                <div className="pt-2 border-t border-slate-800 space-y-2">
+                  <div className="text-[10px] font-bold text-rose-400 uppercase flex items-center space-x-1">
+                    <AlertTriangle className="w-3 h-3 text-rose-500" />
+                    <span>FDA Schedule H1 Active</span>
+                  </div>
                   <input
                     type="text"
                     value={doctorName}
-                    onChange={(e) => setDoctorName(e.target.value)}
-                    placeholder="e.g. Dr. Joshi"
-                    className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-medium focus:bg-white transition-all"
+                    onChange={(e) => updateActiveSlot({ doctorName: e.target.value })}
+                    placeholder="Prescribing Doctor Name..."
+                    className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-white"
+                  />
+                  <input
+                    type="text"
+                    value={doctorRegNo}
+                    onChange={(e) => updateActiveSlot({ doctorRegNo: e.target.value })}
+                    placeholder="Doctor Reg No (MMC)..."
+                    className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-white"
                   />
                 </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-0.5">
-                  <label className="text-[10px] font-medium text-slate-500 block">
-                    Doctor MMC Reg. No.
-                  </label>
-                  <span className="text-[9px] text-slate-400 font-mono">Rule 65</span>
-                </div>
-                <input
-                  type="text"
-                  value={doctorRegNo}
-                  onChange={(e) => setDoctorRegNo(e.target.value)}
-                  placeholder="e.g. MMC-2015/04/1892"
-                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:bg-white transition-all"
-                />
-              </div>
+              )}
             </div>
 
-            {/* Segmented Payment Mode Selector */}
-            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 uppercase tracking-wide">
-                <span>Payment Mode</span>
-                <span className="text-[10px] text-slate-400 font-mono">F8</span>
+            {/* Payment Mode Selector (F8 / Alt+P) */}
+            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 space-y-2">
+              <div className="text-[10px] font-bold text-slate-400 uppercase flex items-center justify-between">
+                <span>Payment Mode (F8)</span>
+                <span className="text-[10px] text-blue-400 font-bold uppercase">{paymentMode}</span>
               </div>
-
               <div className="grid grid-cols-2 gap-1.5">
-                {[
-                  { id: 'cash', label: 'Cash', icon: Banknote },
-                  { id: 'upi', label: 'UPI / QR', icon: QrCode },
-                  ...(allowKhata ? [{ id: 'khata', label: 'Khata Credit', icon: BookMarked }] : []),
-                  { id: 'card', label: 'Card / POS', icon: CreditCard }
-                ].map((mode) => {
-                  const Icon = mode.icon;
-                  const isSelected = paymentMode === mode.id;
-                  return (
-                    <button
-                      key={mode.id}
-                      onClick={() => setPaymentMode(mode.id)}
-                      className={`flex items-center space-x-1.5 p-2 rounded-lg border text-xs font-medium transition-all ${
-                        isSelected
-                          ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900'
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5" />
-                      <span>{mode.label}</span>
-                    </button>
-                  );
-                })}
+                {['cash', 'upi', 'khata', 'card'].map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => updateActiveSlot({ paymentMode: mode })}
+                    className={`py-1.5 px-2 rounded-lg text-xs font-bold uppercase transition-all ${
+                      paymentMode === mode
+                        ? 'bg-blue-600 text-white shadow-sm ring-1 ring-blue-400'
+                        : 'bg-slate-800 text-slate-400 hover:bg-slate-750'
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Discount */}
-            <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between text-xs">
-              <div className="flex items-center space-x-1.5">
-                <span className="font-medium text-slate-600">Bill Discount (₹):</span>
-                {isCashier && (
-                  <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200/60 px-1.5 py-0.2 rounded font-mono">
-                    Max {maxCashierDiscount}%
-                  </span>
-                )}
-              </div>
+            {/* Discount input */}
+            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+              <span className="text-xs text-slate-400">Discount (₹):</span>
               <input
                 type="number"
                 min="0"
+                step="1"
                 value={discount}
                 onChange={(e) => handleDiscountChange(e.target.value)}
-                className="w-20 text-right px-2 py-1 bg-slate-50 border border-slate-200 rounded font-mono font-medium text-xs focus:bg-white"
+                className="w-24 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-right text-xs font-bold text-amber-400 focus:outline-none"
               />
             </div>
+
           </div>
 
-          {/* BILLBOARD TOTAL BOX & PRIMARY ACTION */}
-          <div className="space-y-2.5">
-            <div className="bg-slate-900 text-white p-3.5 rounded-xl shadow-md border border-slate-800 space-y-1.5">
-              <div className="flex justify-between text-[11px] text-slate-400 font-mono">
-                <span>Subtotal ({cart.length} items):</span>
-                <span>₹{subtotal.toFixed(2)}</span>
-              </div>
-              {discount > 0 && (
-                <div className="flex justify-between text-[11px] text-emerald-400 font-mono">
-                  <span>Discount:</span>
-                  <span>-₹{Number(discount).toFixed(2)}</span>
-                </div>
-              )}
-
-              <div className="pt-2 border-t border-slate-800">
-                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Net Amount Due
-                </div>
-                <div className="text-2xl font-extrabold text-emerald-400 font-mono tracking-tight mt-0.5">
-                  ₹ {netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                </div>
-              </div>
+          {/* Bottom Checkout Button & Total */}
+          <div className="space-y-2.5 pt-2 border-t border-slate-800">
+            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 text-right">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Net Payable</span>
+              <span className="text-2xl font-black text-emerald-400 font-mono tracking-tight">
+                ₹{netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </span>
             </div>
 
             <button
               onClick={handleCompleteSale}
               disabled={cart.length === 0}
-              className={`w-full py-3 px-4 rounded-xl font-semibold text-xs flex items-center justify-center space-x-2 transition-all ${
+              className={`w-full py-3 px-4 rounded-xl font-bold text-xs font-mono uppercase tracking-wider flex items-center justify-center space-x-2 transition-all ${
                 cart.length === 0
-                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                  : 'bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white shadow-sm'
+                  ? 'bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-800'
+                  : 'bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white shadow-lg shadow-emerald-950/60'
               }`}
             >
-              <span>Complete Sale & Print (F9)</span>
+              <span>बिल पूर्ण करा (F9 / Ctrl+Enter)</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
+          </div>
+
+        </div>
+
+      </div>
+
+      {/* 4. LIVE BOTTOM INSPECTOR PANEL (Photo 23) */}
+      <div className="bg-slate-950 border-t border-slate-800 px-4 py-2 text-xs text-slate-300 flex items-center justify-between font-mono shrink-0 select-none">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 flex-1">
+          <div>
+            <span className="text-[10px] text-slate-500 block uppercase">Drug (Generic Salt)</span>
+            <span className="font-semibold text-white truncate block max-w-xs text-xs">
+              {inspectorData.drug}
+            </span>
+          </div>
+          <div>
+            <span className="text-[10px] text-slate-500 block uppercase">Shelf (Rack Location)</span>
+            <span className="font-bold text-amber-400 block text-xs">
+              {inspectorData.shelf}
+            </span>
+          </div>
+          <div>
+            <span className="text-[10px] text-slate-500 block uppercase">Company / Pack</span>
+            <span className="text-slate-200 block text-xs">
+              {inspectorData.comp} ({inspectorData.pack})
+            </span>
+          </div>
+          <div>
+            <span className="text-[10px] text-slate-500 block uppercase">Stock (Batch / Total)</span>
+            <span className="font-bold text-emerald-400 block text-xs">
+              Batch: {inspectorData.batchQty} | Total: {inspectorData.totalQty}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* Substitutes Modal */}
-      {substitutesModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg p-5 space-y-3 animate-in fade-in zoom-in-95">
-            <div className="flex justify-between items-start border-b pb-2.5">
+      {/* 5. LIVE EXPIRY & RACK ALERT TICKER (Photos 1, 3, 7, 23) */}
+      <div className="bg-slate-950 border-t border-slate-850 px-4 py-1 text-[11px] font-mono text-slate-400 flex items-center overflow-hidden shrink-0 select-none">
+        <span className="text-rose-400 font-bold flex items-center space-x-1 shrink-0 mr-3">
+          <AlertTriangle className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
+          <span>EXPIRY TICKER :</span>
+        </span>
+        <div className="overflow-hidden whitespace-nowrap flex-1">
+          <div className="animate-marquee inline-block">
+            {expiryTickerItems.length > 0 ? (
+              expiryTickerItems.map((item, idx) => (
+                <span key={idx} className="mr-6 inline-flex items-center space-x-1.5">
+                  <span className="text-white font-bold">{item.product_name}</span>
+                  <span className="text-amber-400">[Shelf: {item.rack_location || 'Rack A-1'}]</span>
+                  <span className="text-rose-400 font-semibold">Exp: {item.expiry_date}</span>
+                  <span className="text-slate-400">(Qty: {item.stock_qty})</span>
+                  <span className="text-slate-600">•</span>
+                </span>
+              ))
+            ) : (
+              <span className="text-slate-500">कोणतेही औषध पुढील ३० दिवसात मुदत संपत नाही (All stock safe)</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 6. BOTTOM FUNCTION KEYS BAR */}
+      <div className="bg-slate-900 border-t border-slate-800 px-4 py-1.5 flex items-center justify-between text-[11px] font-mono text-slate-400 shrink-0 select-none">
+        <div className="flex items-center space-x-3 overflow-x-auto">
+          <span><kbd className="bg-slate-800 px-1 py-0.5 rounded text-white font-bold border border-slate-700">F2</kbd> New Bill</span>
+          <span><kbd className="bg-slate-800 px-1 py-0.5 rounded text-white font-bold border border-slate-700">F4</kbd> Search</span>
+          <span><kbd className="bg-slate-800 px-1 py-0.5 rounded text-white font-bold border border-slate-700">Alt+1..0</kbd> Slots 1-10</span>
+          <span><kbd className="bg-slate-800 px-1 py-0.5 rounded text-white font-bold border border-slate-700">F8</kbd> Mode ({paymentMode.toUpperCase()})</span>
+          <span><kbd className="bg-slate-800 px-1 py-0.5 rounded text-white font-bold border border-slate-700">F9</kbd> Complete (Enter)</span>
+        </div>
+        <div className="text-[10px] text-emerald-400 font-semibold hidden sm:inline">
+          ⚡ 100% Zero-Mouse Counter
+        </div>
+      </div>
+
+      {/* ----------------- MODALS ----------------- */}
+
+      {/* MediVision Stage 2: "Available Stock" Dedicated Batch Selection Pop-up (Photos 11 & 12) */}
+      {batchSelectModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[85vh] text-slate-100 font-mono animate-in zoom-in-95">
+            
+            {/* Header */}
+            <div className="px-5 py-3 bg-gradient-to-r from-blue-900/80 to-slate-900 border-b border-blue-800/60 flex items-center justify-between">
               <div>
-                <h3 className="font-semibold text-sm text-slate-900">
+                <h3 className="text-sm font-bold text-white tracking-wide">
+                  Available Stock of {batchSelectModal.product.name} ({batchSelectModal.product.strip_size || 10} TAB)
+                </h3>
+                <p className="text-xs text-blue-300 font-mono mt-0.5">
+                  Stockist : {batchSelectModal.product.stockist_name || 'KACHOLIYA MEDICAL AGEN'} • Rack: {batchSelectModal.product.rack_location || 'General'}
+                </p>
+              </div>
+              <div className="text-right text-xs text-slate-400 font-mono">
+                <span className="bg-blue-950 px-2.5 py-1 rounded text-blue-300 border border-blue-800/60 font-bold">
+                  {batchSelectModal.batches.length} Batches in Stock
+                </span>
+              </div>
+            </div>
+
+            {/* Batches Table (FEFO Sorted) */}
+            <div className="overflow-y-auto flex-1 p-3">
+              <table className="w-full text-left text-xs font-mono border-collapse">
+                <thead>
+                  <tr className="bg-slate-800/80 text-amber-300 text-[11px] uppercase tracking-wider border-b border-slate-700">
+                    <th className="py-2 px-3">Batch</th>
+                    <th className="py-2 px-3">Exp.Date</th>
+                    <th className="py-2 px-3">Doc. No.</th>
+                    <th className="py-2 px-3">Doc. Date</th>
+                    <th className="py-2 px-3 text-right">Pur.Rate</th>
+                    <th className="py-2 px-3 text-right">MRP</th>
+                    <th className="py-2 px-3 text-right">Rate</th>
+                    <th className="py-2 px-3 text-center font-bold text-emerald-400">Available Qty</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 text-[11px]">
+                  {batchSelectModal.batches.map((b, idx) => {
+                    const isSelected = batchSelectModal.selectedIndex === idx;
+                    const isNearExpiry = b.expiry_date === '10/26' || b.expiry_date === '11/26' || b.status === 'critical';
+                    return (
+                      <tr
+                        key={b.id || idx}
+                        onClick={() => setBatchSelectModal(prev => ({ ...prev, selectedIndex: idx }))}
+                        className={`cursor-pointer transition-colors ${
+                          isSelected
+                            ? 'bg-blue-600 text-white font-bold ring-2 ring-blue-400 shadow-md'
+                            : isNearExpiry
+                              ? 'bg-rose-950/40 text-rose-200 hover:bg-rose-950/60'
+                              : 'hover:bg-slate-800/70 text-slate-200'
+                        }`}
+                      >
+                        <td className="py-2.5 px-3 font-bold">{b.batch_no}</td>
+                        <td className="py-2.5 px-3">
+                          <span className={isNearExpiry ? 'text-rose-400 font-bold' : ''}>
+                            {b.expiry_date}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-400">{b.doc_no || 'CR/' + (5000 + (b.id || 1) * 19)}</td>
+                        <td className="py-2.5 px-3 text-slate-400">{b.doc_date || '20/06/2026'}</td>
+                        <td className="py-2.5 px-3 text-right">₹{Number(b.purchase_rate || b.mrp * 0.7).toFixed(2)}</td>
+                        <td className="py-2.5 px-3 text-right">₹{Number(b.mrp).toFixed(2)}</td>
+                        <td className="py-2.5 px-3 text-right">₹{Number(b.mrp).toFixed(2)}</td>
+                        <td className="py-2.5 px-3 text-center font-bold text-emerald-400">
+                          {b.stock_qty}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Bottom Quantity Input & Hotkeys */}
+            <div className="p-3 bg-slate-950 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+              <div className="flex items-center space-x-3 w-full sm:w-auto">
+                <label className="font-bold text-slate-300">विक्री नग (Qty):</label>
+                <input
+                  ref={batchQtyInputRef}
+                  type="number"
+                  min="1"
+                  max={batchSelectModal.batches[batchSelectModal.selectedIndex]?.stock_qty || 999}
+                  value={batchSelectModal.qty}
+                  onChange={(e) => setBatchSelectModal(prev => ({ ...prev, qty: parseInt(e.target.value, 10) || 1 }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      confirmBatchSelection();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      setBatchSelectModal(null);
+                      searchInputRef.current?.focus();
+                    } else if (e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setBatchSelectModal(prev => ({
+                        ...prev,
+                        selectedIndex: (prev.selectedIndex - 1 + prev.batches.length) % prev.batches.length
+                      }));
+                    } else if (e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      setBatchSelectModal(prev => ({
+                        ...prev,
+                        selectedIndex: (prev.selectedIndex + 1) % prev.batches.length
+                      }));
+                    }
+                  }}
+                  className="w-20 px-2 py-1 bg-slate-800 border border-blue-500 rounded text-center text-sm font-bold text-white focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                  autoFocus
+                />
+                {allowLooseTablets && batchSelectModal.product.category === 'medicine' && batchSelectModal.product.strip_size > 1 && (
+                  <label className="flex items-center space-x-1.5 text-slate-400 text-xs cursor-pointer ml-3">
+                    <input
+                      type="checkbox"
+                      checked={batchSelectModal.isLoose}
+                      onChange={(e) => setBatchSelectModal(prev => ({ ...prev, isLoose: e.target.checked }))}
+                      className="rounded border-slate-700 text-emerald-500"
+                    />
+                    <span>Loose Tabs (सुट्या गोळ्या)</span>
+                  </label>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+                <button
+                  onClick={() => {
+                    setBatchSelectModal(null);
+                    searchInputRef.current?.focus();
+                  }}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-semibold"
+                >
+                  रद्द करा (Esc)
+                </button>
+                <button
+                  onClick={confirmBatchSelection}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold shadow-md flex items-center space-x-1"
+                >
+                  <span>बिलामध्ये जोडा (Enter)</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* MediVision Multi-Bill Item Shift Modal (Photo 22: "Shift Item?") */}
+      {shiftItemModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden text-slate-100 font-mono animate-in zoom-in-95">
+            <div className="px-4 py-2.5 bg-blue-900/50 border-b border-blue-800/60 text-xs font-bold text-blue-200 flex items-center space-x-2">
+              <ArrowRightLeft className="w-4 h-4 text-amber-400" />
+              <span>Shift Item?</span>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="flex items-start space-x-3">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-white leading-relaxed">
+                    Do you want to add this item to the list of customer{' '}
+                    <select
+                      value={shiftItemModal.targetSlot}
+                      onChange={(e) => setShiftItemModal(prev => ({ ...prev, targetSlot: Number(e.target.value) }))}
+                      className="bg-slate-800 border border-slate-600 rounded px-2 py-0.5 text-xs text-white font-mono mx-1 focus:border-blue-500"
+                    >
+                      {slots.map((s, idx) => (
+                        idx !== activeSlotIdx && (
+                          <option key={s.id} value={s.id}>
+                            Customer {s.id} {s.customerName ? `(${s.customerName})` : ''}
+                          </option>
+                        )
+                      ))}
+                    </select>{' '}
+                    from the list of customer {activeSlotIdx + 1}?
+                  </p>
+                  <p className="text-xs text-slate-400 pt-1">
+                    Item: <strong className="text-amber-300">{cart[shiftItemModal.itemIndex]?.product_name}</strong> (Qty: {cart[shiftItemModal.itemIndex]?.qty})
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2">
+                <button
+                  onClick={() => setShiftItemModal(null)}
+                  className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-semibold"
+                >
+                  No (Esc)
+                </button>
+                <button
+                  onClick={confirmShiftItem}
+                  className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded text-xs font-bold shadow-md"
+                  autoFocus
+                >
+                  Yes (Enter)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Salt Substitutes Modal */}
+      {substitutesModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 rounded-xl shadow-2xl border border-slate-700 w-full max-w-lg p-5 space-y-3 font-mono text-slate-100 animate-in zoom-in-95">
+            <div className="flex justify-between items-start border-b border-slate-800 pb-2.5">
+              <div>
+                <h3 className="font-bold text-sm text-white">
                   Salt Substitutes: {substitutesModal.original.name}
                 </h3>
-                <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                <p className="text-[11px] text-slate-400 mt-0.5">
                   Composition: {substitutesModal.original.generic_salt}
                 </p>
               </div>
               <button
                 onClick={() => setSubstitutesModal(null)}
-                className="text-slate-400 hover:text-slate-700 text-sm font-semibold"
+                className="text-slate-400 hover:text-white text-sm font-semibold"
               >
                 ✕
               </button>
             </div>
 
-            <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+            <div className="divide-y divide-slate-800 max-h-72 overflow-y-auto">
               {substitutesModal.substitutes.length === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-400">
-                  No other medicines found with this exact salt composition.
+                <div className="py-8 text-center text-xs text-slate-500">
+                  समान घटक असलेले इतर कोणतेही औषध उपलब्ध नाही.
                 </div>
               ) : (
                 substitutesModal.substitutes.map((sub) => (
                   <div
                     key={sub.id}
-                    className="py-2.5 flex items-center justify-between hover:bg-slate-50 px-2 rounded-md"
+                    className="py-2.5 flex items-center justify-between hover:bg-slate-800/60 px-2 rounded-md"
                   >
                     <div>
-                      <div className="font-semibold text-xs text-slate-900">{sub.name}</div>
-                      <div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5">
-                        <span className="rack-chip">
-                          <MapPin className="w-2.5 h-2.5 text-slate-400" />
-                          {sub.rack_location}
+                      <div className="font-bold text-xs text-white">{sub.name}</div>
+                      <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
+                        <span className="text-amber-300 font-bold">
+                          Rack: {sub.rack_location || 'Rack A-1'}
                         </span>
-                        <span className="font-mono text-emerald-700 font-medium">
+                        <span className="text-emerald-400 font-bold">
                           In Stock: {sub.total_stock}
                         </span>
                       </div>
                     </div>
                     <button
                       onClick={() => {
-                        addItemToCart(sub, false);
+                        openBatchSelectionModal(sub);
                         setSubstitutesModal(null);
                       }}
-                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-medium"
+                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold"
                     >
                       Select Brand
                     </button>
@@ -1181,129 +1349,12 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
               )}
             </div>
 
-            <div className="text-right pt-2 border-t border-slate-100">
+            <div className="text-right pt-2 border-t border-slate-800">
               <button
                 onClick={() => setSubstitutesModal(null)}
-                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-medium"
+                className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-xs font-medium"
               >
                 Dismiss
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Peak Hour Held Bills Modal (F6) */}
-      {showHeldModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95">
-            {/* Modal Header */}
-            <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
-              <div className="flex items-center space-x-2.5">
-                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg">
-                  <Clock className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold tracking-tight">Held Counter Bills (राखून ठेवलेली बिले)</h3>
-                  <p className="text-[11px] text-slate-400">
-                    {heldBills.length} parked customer {heldBills.length === 1 ? 'bill' : 'bills'} in peak hour queue • Hotkey <kbd className="font-mono bg-slate-800 px-1 py-0.5 rounded text-amber-300">F6</kbd>
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowHeldModal(false)}
-                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-xs"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Held Bills List */}
-            <div className="p-4 overflow-y-auto flex-1 divide-y divide-slate-100 space-y-2">
-              {heldBills.length === 0 ? (
-                <div className="py-12 text-center text-slate-400 space-y-2">
-                  <PauseCircle className="w-10 h-10 mx-auto text-slate-300 stroke-1" />
-                  <div className="text-xs font-semibold text-slate-600">No Bills Currently on Hold</div>
-                  <div className="text-[11px] text-slate-400 max-w-xs mx-auto">
-                    During busy counter rush, click "Hold Bill (F6)" to park a customer's cart and serve the next person instantly!
-                  </div>
-                </div>
-              ) : (
-                heldBills.map((held, idx) => (
-                  <div
-                    key={held.id}
-                    className="pt-2 first:pt-0 pb-2 flex items-start justify-between gap-3 hover:bg-slate-50 p-3 rounded-xl border border-slate-100 transition-colors"
-                  >
-                    <div className="space-y-1 flex-1">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-bold text-xs text-slate-900">{held.customerName}</span>
-                        {held.customerMobile && (
-                          <span className="text-[11px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded">
-                            {held.customerMobile}
-                          </span>
-                        )}
-                        {held.customerAddress && (
-                          <span className="text-[10px] text-slate-500 flex items-center gap-0.5">
-                            <MapPin className="w-2.5 h-2.5 text-slate-400" />
-                            {held.customerAddress}
-                          </span>
-                        )}
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          {new Date(held.heldAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-
-                      {/* Items Summary */}
-                      <div className="text-[11px] text-slate-600 line-clamp-2">
-                        {(held.cart || []).map((it) => `${it.product_name} (${it.qty}${it.is_loose_tablet ? ' tabs' : ' strips'})`).join(', ')}
-                      </div>
-
-                      <div className="flex items-center space-x-3 text-[11px] font-medium text-slate-700 pt-0.5">
-                        <span className="font-mono text-emerald-700 font-bold">
-                          ₹{Number(held.totalAmount || 0).toFixed(2)}
-                        </span>
-                        <span className="text-slate-400">•</span>
-                        <span className="text-slate-500">{held.cart?.length || 0} items</span>
-                        {held.doctorName && (
-                          <>
-                            <span className="text-slate-400">•</span>
-                            <span className="text-slate-500">Dr. {held.doctorName}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center space-x-1.5 shrink-0">
-                      <button
-                        onClick={() => handleResumeBill(held)}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-xs transition-colors"
-                      >
-                        <PlayCircle className="w-3.5 h-3.5" />
-                        <span>Resume</span>
-                      </button>
-                      <button
-                        onClick={() => handleDiscardHeldBill(held.id)}
-                        className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-xs transition-colors"
-                        title="Discard held bill"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-between items-center text-xs">
-              <span className="text-slate-500">
-                Tip: Press <kbd className="font-mono bg-white border px-1 py-0.5 rounded text-slate-700 font-semibold">F6</kbd> anywhere on counter to quick-hold or recall.
-              </span>
-              <button
-                onClick={() => setShowHeldModal(false)}
-                className="px-3.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium rounded-lg text-xs"
-              >
-                Close
               </button>
             </div>
           </div>
@@ -1326,13 +1377,14 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
       {/* Shortage Quick Notification Toast */}
       {shortageToast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-amber-500/40 flex items-center space-x-2.5 animate-in slide-in-from-bottom duration-200">
+        <div className="fixed bottom-12 right-6 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-amber-500/50 flex items-center space-x-2.5 animate-in slide-in-from-bottom duration-200 font-mono">
           <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
             <Check className="w-4 h-4" />
           </div>
           <span className="text-xs font-medium text-amber-200">{shortageToast}</span>
         </div>
       )}
+
     </div>
   );
 }
