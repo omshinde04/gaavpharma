@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GaavPharma — Medical Store Owner Demonstration & Feature Guide</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+    :root {
+      --primary: #047857;
+      --primary-dark: #064e3b;
+      --primary-light: #ecfdf5;
+      --secondary: #0f172a;
+      --accent: #2563eb;
+      --amber: #d97706;
+      --rose: #e11d48;
+      --slate-50: #f8fafc;
+      --slate-100: #f1f5f9;
+      --slate-200: #e2e8f0;
+      --slate-600: #475569;
+      --slate-800: #1e293b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #1e293b;
+      background: #ffffff;
+      line-height: 1.6;
+      font-size: 13px;
+      padding: 30px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    @media print {
+      body {
+        padding: 0;
+        max-width: 100%;
+        font-size: 12px;
+      }
+      .page-break {
+        page-break-before: always;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .print-btn {
+        display: none !important;
+      }
+    }
+
+    header {
+      border-bottom: 3px solid var(--primary);
+      padding-bottom: 20px;
+      margin-bottom: 25px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .brand-title {
+      font-size: 26px;
+      font-weight: 800;
+      color: var(--secondary);
+      letter-spacing: -0.5px;
+    }
+
+    .brand-title span {
+      color: var(--primary);
+    }
+
+    .brand-subtitle {
+      font-size: 13px;
+      color: var(--slate-600);
+      font-weight: 500;
+      margin-top: 4px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-primary {
+      background: var(--primary-light);
+      color: var(--primary);
+      border: 1px solid #a7f3d0;
+    }
+
+    .badge-amber {
+      background: #fef3c7;
+      color: var(--amber);
+      border: 1px solid #fde68a;
+    }
+
+    .hero-box {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: white;
+      border-radius: 12px;
+      padding: 22px;
+      margin-bottom: 25px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+    }
+
+    .hero-box h2 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: #34d399;
+    }
+
+    .hero-box p {
+      font-size: 12.5px;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+
+    h2.section-header {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--secondary);
+      border-left: 4px solid var(--primary);
+      padding-left: 10px;
+      margin-top: 25px;
+      margin-bottom: 12px;
+    }
+
+    h3.sub-header {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--slate-800);
+      margin-top: 15px;
+      margin-bottom: 6px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: 11.5px;
+    }
+
+    th, td {
+      border: 1px solid var(--slate-200);
+      padding: 8px 10px;
+      text-align: left;
+    }
+
+    th {
+      background: var(--slate-100);
+      font-weight: 700;
+      color: var(--slate-800);
+    }
+
+    tr:nth-child(even) {
+      background: #fafafa;
+    }
+
+    .card {
+      border: 1px solid var(--slate-200);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      background: white;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary-dark);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .step-number {
+      background: var(--primary);
+      color: white;
+      border-radius: 50%;
+      width: 22px;
+      height: 22px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    kbd {
+      display: inline-block;
+      padding: 2px 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 700;
+      color: #0f172a;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      box-shadow: 0 1px 1px rgba(0,0,0,0.1);
+    }
+
+    .diagram-img {
+      width: 100%;
+      max-height: 400px;
+      object-fit: contain;
+      border-radius: 10px;
+      border: 1px solid var(--slate-200);
+      margin: 15px 0;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    }
+
+    .highlight-pill {
+      background: #ecfdf5;
+      color: #047857;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+
+    .print-btn {
+      position: fixed;
+      bottom: 25px;
+      right: 25px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 30px;
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: 700;
+      box-shadow: 0 4px 15px rgba(4, 120, 87, 0.4);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 999;
+      transition: all 0.2s;
+    }
+
+    .print-btn:hover {
+      background: var(--primary-dark);
+      transform: translateY(-2px);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Floating Print to PDF button -->
+  <button class="print-btn" onclick="window.print()">
+    🖨️ Print / Save as PDF
+  </button>
+
+  <header>
+    <div>
+      <div class="brand-title">Gaav<span>Pharma</span></div>
+      <div class="brand-subtitle">Next-Gen Offline POS & Statutory Management System for Retail Pharmacies</div>
+      <div style="font-size: 11px; color: #64748b; margin-top: 3px;">
+        Designed specifically to outperform legacy systems (MediVision / Marg) with modern speed, dual backup, and statutory FDA/GST compliance.
+      </div>
+    </div>
+    <div style="text-align: right;">
+      <span class="badge badge-primary">Official Chemist Demo Guide</span>
+      <div style="font-size: 10.5px; color: #64748b; margin-top: 5px; font-family: monospace;">Version 1.0.0 (Production)</div>
+    </div>
+  </header>
+
+  <!-- Executive Overview -->
+  <div class="hero-box">
+    <h2>Why Upgrade from MediVision to GaavPharma?</h2>
+    <p>
+      Legacy systems like <strong>MediVision</strong> were designed decades ago—they are slow, complicated, require extensive mouse clicking or arcane keyboard codes, lack automated daily backup safeguards, and force chemists to maintain manual paper registers for FDA Schedule H1. 
+      <strong>GaavPharma</strong> is a 100% offline, zero-lag desktop POS engineered for fast-paced retail chemists. It eliminates lost sales during rush hours, guarantees zero data loss through dual PC + USB backups, and automates all statutory Drug Inspector and GST compliance.
+    </p>
+  </div>
+
+  <!-- Architecture Flow Diagram -->
+  <h2 class="section-header">1. Complete Pharmacy Operational Flowchart</h2>
+  <p style="color: #64748b; font-size: 12px; margin-bottom: 8px;">
+    The six core automated engines that power daily operations in a high-volume medical store:
+  </p>
+  <img src="../gaavpharma_workflow_diagram_1792238318261.jpg" alt="GaavPharma Workflow Architecture" class="diagram-img" onerror="this.src='/Users/omshinde/.gemini/antigravity-ide/brain/5b9867f9-2744-4adc-95cd-2e3054349c7b/gaavpharma_workflow_diagram_1792238318261.jpg'">
+
+  <!-- Direct Comparison Table -->
+  <h2 class="section-header">2. Head-to-Head Comparison: GaavPharma vs. MediVision</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 22%;">Feature / Requirement</th>
+        <th style="width: 38%;">Legacy MediVision</th>
+        <th style="width: 40%; color: var(--primary);">🚀 Modern GaavPharma</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Daily Data Safety & Backup</strong></td>
+        <td>Manual backup only. Saves to local PC drive. If the hard disk fails, the chemist loses all customer khata and billing history.</td>
+        <td><strong>Dual PC + USB Auto-Backup on Exit:</strong> Automatically prompts on Logout. Saves simultaneously to Local PC and attached USB Pendrive with 30-day auto-rotation.</td>
+      </tr>
+      <tr>
+        <td><strong>Rush Hour Counter Billing</strong></td>
+        <td>If a customer steps away to get cash, the cashier must cancel or delete the whole bill, causing long queues.</td>
+        <td><strong>F6 Hold & Resume:</strong> 1-click park current customer's cart, serve next customer immediately, and resume with F6 in 1 second.</td>
+      </tr>
+      <tr>
+        <td><strong>FDA Schedule H1 Register (Rule 65)</strong></td>
+        <td>Requires chemists to maintain a physical handwritten register book every day. Heavy penalty risk during Drug Inspector raids.</td>
+        <td><strong>Automated Statutory Register:</strong> Automatically captures Doctor MMC Reg No, Patient Name, Address & Batch. Instant 1-click legal register printout.</td>
+      </tr>
+      <tr>
+        <td><strong>Wholesale Purchase & Distributor Ledger</strong></td>
+        <td>Clunky data entry. Scheme items (10+2) require manual calculation. Distributor balances often mismatch.</td>
+        <td><strong>Seamless Inward & Ledger Passbook:</strong> Auto-calculates free schemes, updates stock, and maintains live <em>"Accounts Payable"</em> passbook ledger per distributor.</td>
+      </tr>
+      <tr>
+        <td><strong>Expired Stock & Section 34 CGST</strong></td>
+        <td>Manual debit notes with high error rates in ITC (Input Tax Credit) reversals.</td>
+        <td><strong>Section 34 GST Debit Notes:</strong> 1-click return note with official DN number, auto-deducts distributor debt, and correctly reconciles GSTR-3B ITC.</td>
+      </tr>
+      <tr>
+        <td><strong>Out-of-Stock Re-ordering (Shortage Diary)</strong></td>
+        <td>Handwritten notebook diary. Often forgotten, resulting in lost customer prescriptions.</td>
+        <td><strong>Auto-Shortage Diary + 1-Click WhatsApp PO:</strong> Automatically tracks low stock and generates formatted WhatsApp purchase orders sent straight to the stockist.</td>
+      </tr>
+      <tr>
+        <td><strong>Speed & Hardware Requirements</strong></td>
+        <td>Slow startup, prone to index corruption, requires constant technical support visits.</td>
+        <td><strong>100% Offline SQLite Architecture:</strong> Starts in 1 second, zero-lag barcode scanning, zero internet needed, runs on any basic Windows/Mac PC.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-break"></div>
+
+  <!-- Chemist Live Demonstration Walkthrough -->
+  <h2 class="section-header">3. Step-by-Step Live Chemist Demonstration Script (15-Minute Test)</h2>
+  <p style="color: #64748b; font-size: 12px; margin-bottom: 12px;">
+    Follow this exact interactive script when sitting with the medical store owner to demonstrate GaavPharma's next-level capabilities:
+  </p>
+
+  <!-- Step 1 -->
+  <div class="card">
+    <div class="card-title">
+      <span class="step-number">1</span>
+      Instant PIN Keypad Login & Role-Based Access Control (RBAC)
+    </div>
+    <p style="margin-top: 6px;">
+      <strong>Action:</strong> On the lockscreen keypad, enter PIN <kbd>1111</kbd> to log in as Store Owner (Divya Kale).
+    </p>
+    <ul style="margin-left: 20px; margin-top: 4px; font-size: 12px; color: #475569;">
+      <li><strong>What to highlight:</strong> No cumbersome usernames or passwords to remember. Fast 4-digit PIN designed for quick cashier shift changes.</li>
+      <li><strong>Security Feature:</strong> Cashiers can only bill and hold bills. Wholesale purchase prices, distributor debt, and settings are securely locked to the Store Admin.</li>
+    </ul>
+  </div>
+
+  <!-- Step 2 -->
+  <div class="card">
+    <div class="card-title">
+      <span class="step-number">2</span>
+      High-Speed Counter Billing & Mouse-Free Keyboard Operation
+    </div>
+    <p style="margin-top: 6px;">
+      <strong>Action:</strong> In the search box, type <kbd>Do</kbd> or <kbd>Aug</kbd>. Press <kbd>↓</kbd> (Arrow Down) to navigate search results, then press <kbd>Enter</kbd>.
+    </p>
+    <ul style="margin-left: 20px; margin-top: 4px; font-size: 12px; color: #475569;">
+      <li><strong>What to highlight:</strong> The medicine is instantly added to the bill with FIFO batch selection, expiry date, rack location, and unit rate without ever touching the mouse!</li>
+      <li><strong>Generic Salt Substitutes:</strong> If a medicine is out of stock, click <em>"Find Substitutes"</em> to view all in-stock medicines sharing the exact generic chemical composition (e.g. Paracetamol 650mg).</li>
+      <li><strong>Fast Payment Toggle:</strong> Press <kbd>F8</kbd> to instantly cycle between Cash, UPI (auto-displays dynamic QR code), Khata (Customer Credit), and Card.</li>
+    </ul>
+  </div>
+
+  <!-- Step 3 -->
+  <div class="card">
+    <div class="card-title">
+      <span class="step-number">3</span>
+      Peak-Hour Rush: "Hold & Resume" Counter Bills (<kbd>F6</kbd>)
+    </div>
+    <p style="margin-top: 6px;">
+      <strong>Action:</strong> While 2 medicines are in the cart, press <kbd>F6</kbd>. The counter clears instantly for the next customer. Then press <kbd>F6</kbd> again and click <em>"Resume"</em>.
+    </p>
+    <ul style="margin-left: 20px; margin-top: 4px; font-size: 12px; color: #475569;">
+      <li><strong>What to highlight:</strong> In busy evening rush hours, customers often forget their wallet or ask for an additional medicine from a nearby clinic. In MediVision, the bill must be cancelled. In GaavPharma, <kbd>F6</kbd> parks the bill in a queue so you can bill 5 other customers and resume in 1 second.</li>
+    </ul>
+  </div>
+
+  <!-- Step 4 -->
+  <div class="card">
+    <div class="card-title">
+      <span class="step-number">4</span>
+      Statutory FDA Schedule H1 Compliance Register (Rule 65)
+    </div>
+    <p style="margin-top: 6px;">
+      <strong>Action:</strong> Add a Schedule H1 medicine (e.g., Augmentin 625 Duo). Notice the red Schedule H1 badge. Enter Patient Name, Village/Address, Prescribing Doctor, and Doctor's MMC Reg No. Press <kbd>F9</kbd> to complete sale.
+    </p>
+    <ul style="margin-left: 20px; margin-top: 4px; font-size: 12px; color: #475569;">
+      <li><strong>What to highlight:</strong> Navigate to the <strong>Compliance & GST Hub</strong> tab. Show the medical owner the digital Schedule H1 Register. Every prescription sale is legally logged with serial number, batch, patient name, and doctor registration number ready for Drug Inspector inspection.</li>
+    </ul>
+  </div>
+
+  <!-- Step 5 -->
+  <div class="card">
+    <div class="card-title">
+      <span class="step-number">5</span>
+      Wholesale Purchase Inwarding & Distributor Ledger ("Accounts Payable")
+    </div>
+    <p style="margin-top: 6px;">
+      <strong>Action:</strong> Click <strong>Purchases & Distributors</strong> (<kbd>F7</kbd>). Click <em>"+ Inward Wholesale Bill"</em>. Select distributor (e.g. Mahaveer Pharma), enter invoice number, medicine batch, purchase rate, and free scheme (e.g. 10 + 2 Free).
+    </p>
+    <ul style="margin-left: 20px; margin-top: 4px; font-size: 12px; color: #475569;">
+      <li><strong>What to highlight:</strong> Free scheme items are automatically added to inventory stock (12 units total). Show the distributor ledger: each inward bill automatically adds to the pending balance, and payments made reduce the balance with reference numbers.</li>
+    </ul>
+  </div>
+
+  <!-- Step 6 -->
+  <div class="card">
+    <div class="card-title">
+      <span class="step-number">6</span>
+      Section 34 CGST Expiry Debit Notes & Wholesaler Returns
+    </div>
+    <p style="margin-top: 6px;">
+      <strong>Action:</strong> In Purchases, click <em>"+ Issue GST Debit Note"</em>. Select expired medicine batch and claim quantity.
+    </p>
+    <ul style="margin-left: 20px; margin-top: 4px; font-size: 12px; color: #475569;">
+      <li><strong>What to highlight:</strong> Automatically generates an official GST Debit Note (`DN-XXXXXX`). Inventory stock is immediately deducted, the distributor's accounts payable balance is reduced by the claim amount, and the GSTR-3B tax summary reverses the Input Tax Credit (ITC) legally under Section 34.</li>
+    </ul>
+  </div>
+
+  <!-- Step 7 -->
+  <div class="card">
+    <div class="card-title">
+      <span class="step-number">7</span>
+      Auto-Shortage Diary & 1-Click WhatsApp Purchase Order
+    </div>
+    <p style="margin-top: 6px;">
+      <strong>Action:</strong> Open the <strong>Shortage Diary</strong> tab. Show items automatically added due to low stock. Click the green <strong>WhatsApp</strong> button next to any distributor.
+    </p>
+    <ul style="margin-left: 20px; margin-top: 4px; font-size: 12px; color: #475569;">
+      <li><strong>What to highlight:</strong> A beautifully formatted purchase order is generated instantly containing your store name, drug license numbers (20B/21B), item names, strip sizes, and suggested order quantities—ready to send to the distributor via WhatsApp with 1 click!</li>
+    </ul>
+  </div>
+
+  <!-- Step 8 -->
+  <div class="card">
+    <div class="card-title">
+      <span class="step-number">8</span>
+      Daily Shop Exit: Dual PC + USB Pendrive Safety Backup Engine
+    </div>
+    <p style="margin-top: 6px;">
+      <strong>Action:</strong> Click the red <strong>Logout</strong> button in the top right header (or press <kbd>Shift + L</kbd>).
+    </p>
+    <ul style="margin-left: 20px; margin-top: 4px; font-size: 12px; color: #475569;">
+      <li><strong>The Visual Wow Factor:</strong> The modal <em>"Take Daily Safety Backup Before Exit"</em> appears displaying both <strong>Local PC Hard Drive (`D:\GaavPharma_Backups`)</strong> and <strong>Removable USB Pendrive</strong>.</li>
+      <li>Click <strong>[ 1-Click Safe Backup & Exit ]</strong>. Watch the 3-step progress bar (WAL Flush ➔ Dual File Copy ➔ 30-Day Auto Pruning) finish in 1.5 seconds and return to the secure lockscreen.</li>
+      <li><strong>Disaster Recovery Assurance:</strong> Explain to the owner: <em>"Even if your computer crashes tomorrow or is stolen, your entire store's inventory, khata credit, and bills are safe on your pendrive. Plug it into any laptop, click Restore, and you are back in business in 2 seconds!"</em></li>
+    </ul>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- Master Keyboard Hotkeys Sheet -->
+  <h2 class="section-header">4. Master Keyboard Hotkeys Reference Sheet</h2>
+  <p style="color: #64748b; font-size: 12px; margin-bottom: 8px;">
+    Chemists can print this table and keep it on their billing counter for 100% mouse-free operation:
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 15%;">Key</th>
+        <th style="width: 20%;">Alternative</th>
+        <th style="width: 30%;">Action Name</th>
+        <th style="width: 35%;">Practical Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><kbd>F1</kbd></td>
+        <td><kbd>?</kbd></td>
+        <td><strong>Shortcuts Cheatsheet</strong></td>
+        <td>Displays the interactive on-screen keyboard shortcuts guide popup.</td>
+      </tr>
+      <tr>
+        <td><kbd>F2</kbd></td>
+        <td><kbd>Ctrl + N</kbd> or <kbd>Ctrl + 1</kbd></td>
+        <td><strong>New Bill / Clear Cart</strong></td>
+        <td>Clears counter and prepares bill for the next retail customer.</td>
+      </tr>
+      <tr>
+        <td><kbd>F3</kbd></td>
+        <td><kbd>Ctrl + 2</kbd></td>
+        <td><strong>Expiry Radar</strong></td>
+        <td>Opens the radar tracking near-expiry batches and potential PTR loss.</td>
+      </tr>
+      <tr>
+        <td><kbd>F4</kbd></td>
+        <td><kbd>Ctrl + F</kbd> or <kbd>/</kbd></td>
+        <td><strong>Focus Search / Barcode</strong></td>
+        <td>Instantly places cursor into the medicine search box.</td>
+      </tr>
+      <tr>
+        <td><kbd>↑</kbd> / <kbd>↓</kbd></td>
+        <td><strong>Arrow Keys</strong></td>
+        <td><strong>Navigate Search Results</strong></td>
+        <td>Move through dropdown medicines without touching the computer mouse.</td>
+      </tr>
+      <tr>
+        <td><kbd>Enter</kbd></td>
+        <td><strong>Return</strong></td>
+        <td><strong>Add Item to Bill</strong></td>
+        <td>Adds the highlighted medicine and batch into the customer bill.</td>
+      </tr>
+      <tr>
+        <td><kbd>F5</kbd></td>
+        <td><kbd>Ctrl + 4</kbd></td>
+        <td><strong>Daily Register & Khata</strong></td>
+        <td>Opens cash drawer summary, daily sales register, and credit khata ledger.</td>
+      </tr>
+      <tr>
+        <td><kbd>F6</kbd></td>
+        <td><strong>Hold Bill Button</strong></td>
+        <td><strong>Hold / Resume Bill</strong></td>
+        <td>Parks active customer cart during rush hour or recalls held carts.</td>
+      </tr>
+      <tr>
+        <td><kbd>F7</kbd></td>
+        <td><kbd>Ctrl + 5</kbd></td>
+        <td><strong>Wholesale Purchases</strong></td>
+        <td>Opens distributor inwarding and accounts payable ledger.</td>
+      </tr>
+      <tr>
+        <td><kbd>F8</kbd></td>
+        <td><kbd>Alt + P</kbd></td>
+        <td><strong>Cycle Payment Mode</strong></td>
+        <td>Toggles between Cash ➔ UPI QR ➔ Khata Credit ➔ Card.</td>
+      </tr>
+      <tr>
+        <td><kbd>F9</kbd></td>
+        <td><kbd>Ctrl + Enter</kbd></td>
+        <td><strong>Complete Sale & Print</strong></td>
+        <td>Finalizes bill, deducts stock, and sends receipt to thermal printer.</td>
+      </tr>
+      <tr>
+        <td><kbd>F10</kbd></td>
+        <td><kbd>Ctrl + 6</kbd></td>
+        <td><strong>Shortage Diary</strong></td>
+        <td>Opens out-of-stock list with 1-click WhatsApp purchase order.</td>
+      </tr>
+      <tr>
+        <td><kbd>F11</kbd></td>
+        <td><kbd>Ctrl + 7</kbd></td>
+        <td><strong>FDA H1 & GST Hub</strong></td>
+        <td>Opens Rule 65 legal prescription register and GSTR-3B tax report.</td>
+      </tr>
+      <tr>
+        <td><kbd>Alt + H</kbd></td>
+        <td>—</td>
+        <td><strong>Patient / Doctor Jump</strong></td>
+        <td>Jumps cursor straight to patient mobile and doctor name fields.</td>
+      </tr>
+      <tr>
+        <td><kbd>Shift + L</kbd></td>
+        <td><strong>Logout Button</strong></td>
+        <td><strong>Daily Exit Safe Backup</strong></td>
+        <td>Opens daily exit backup dialog to save database to PC + USB pendrive.</td>
+      </tr>
+      <tr>
+        <td><kbd>Esc</kbd></td>
+        <td>—</td>
+        <td><strong>Close Window / Modal</strong></td>
+        <td>Dismisses search dropdown, held bills popup, or active dialogs.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Chemist Closing Pitch -->
+  <h2 class="section-header">5. The Chemist Closing Pitch (How to Win Them Over)</h2>
+  <div style="background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: 10px; padding: 18px; margin-top: 10px;">
+    <h3 style="font-size: 14px; font-weight: 700; color: var(--secondary); margin-bottom: 6px;">
+      Three Irresistible Guarantees for the Pharmacy Owner:
+    </h3>
+    <ol style="margin-left: 22px; font-size: 12px; color: var(--slate-800); line-height: 1.8;">
+      <li>
+        <strong>"Zero Risk of Data Loss":</strong> MediVision has caused countless medical stores to lose years of khata credit when hard drives crash. GaavPharma's automatic dual PC + USB backup makes data loss physically impossible.
+      </li>
+      <li>
+        <strong>"Zero Audit Penalties":</strong> Drug Inspector raids for Schedule H1 compliance and GST audits under Section 34 are fully automated. Every bill is legally compliant with one click.
+      </li>
+      <li>
+        <strong>"Faster Counter Billing in Rush Hours":</strong> With mouse-free navigation, instant salt substitutes, and F6 bill parking, counter lines move twice as fast, directly increasing daily turnover.
+      </li>
+    </ol>
+  </div>
+
+  <footer style="margin-top: 40px; padding-top: 15px; border-top: 1px solid var(--slate-200); text-align: center; font-size: 11px; color: #94a3b8;">
+    GaavPharma Pharmacy POS System • Built for Indian Medical Stores • Confidential Demonstration Document
+  </footer>
+
+</body>
+</html>
