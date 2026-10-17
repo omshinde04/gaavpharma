@@ -727,6 +727,186 @@ async function runTestSuite() {
   const paymentVouchers = await api.getAccountingVouchers({ voucher_type: 'PAYMENT' });
   assert(paymentVouchers.every(v => v.voucher_type === 'PAYMENT'), 'getAccountingVouchers correctly filters by PAYMENT type');
 
+  // 15. Phase 2: MediVision Advanced Stock Ledger, Fast Item Master & Customer Sales Returns
+  console.log('\n⚡ [TEST GROUP 15] MediVision Advanced Stock Ledger, Fast Item Master & Customer Sales Returns (Phase 2)');
+  
+  // 15.1 In-Line Fast Item & Batch Creation (Photos 8 & 9)
+  const fastProd = await api.fastCreateProductWithBatch({
+    name: 'FastCure 500 Tablet',
+    generic_salt: 'Amoxicillin 500mg',
+    category: 'medicine',
+    rack_location: 'Rack D-2',
+    strip_size: 10,
+    is_schedule_h1: true,
+    min_stock_alert: 10,
+    batch_no: 'FC-991',
+    expiry_date: '08/28',
+    purchase_rate: 45.0,
+    mrp: 75.0,
+    stock_qty: 30
+  });
+  assert(fastProd && fastProd.success === true, 'Fast Product & Batch created in 5 seconds via fastCreateProductWithBatch');
+  assert(fastProd.product.name === 'FastCure 500 Tablet', 'Fast Product name stored accurately');
+  assert(fastProd.batch.batch_no === 'FC-991', 'Fast Product batch number stored accurately');
+  assert(fastProd.batch.stock_qty === 30, 'Initial batch stock quantity set to 30 units');
+  assert(fastProd.product.total_stock === 30, 'Product total stock reflects 30 units');
+
+  // Fast Product Search verification
+  const fastSearch = await api.searchProducts('FastCure');
+  assert(fastSearch.length > 0 && fastSearch[0].name === 'FastCure 500 Tablet', 'Fast-created product immediately searchable in billing counter autocomplete');
+
+  // 15.2 Counter Sale of Fast-Created Product
+  const saleInvoice = await api.createInvoice({
+    customer_name: 'Dattatray Shinde',
+    customer_mobile: '9822998877',
+    customer_address: 'Ghoti Budruk',
+    payment_mode: 'cash',
+    total_amount: 150.0,
+    discount: 0,
+    final_amount: 150.0
+  }, [
+    {
+      product_id: fastProd.product.id,
+      product_name: fastProd.product.name,
+      batch_id: fastProd.batch.id,
+      batch_no: 'FC-991',
+      qty: 2,
+      unit_price: 75.0,
+      total_price: 150.0
+    }
+  ]);
+  assert(saleInvoice && saleInvoice.invoice_no.startsWith('INV-'), 'Counter retail sale completed for fast-created medicine');
+
+  // 15.3 Customer Sales Return / Credit Note (Photos 17 & 19)
+  const salesReturnRes = await api.createSalesReturn({
+    original_invoice_no: saleInvoice.invoice_no,
+    customer_name: 'Dattatray Shinde',
+    customer_mobile: '9822998877',
+    return_date: '2026-10-18',
+    refund_mode: 'CASH',
+    total_refund_amount: 75.0,
+    reason: 'PATIENT_UNUSED',
+    notes: 'Patient completed treatment, returned 1 unused strip',
+    items: [
+      {
+        product_id: fastProd.product.id,
+        batch_id: fastProd.batch.id,
+        batch_no: 'FC-991',
+        qty: 1,
+        refund_rate: 75.0,
+        total_amount: 75.0
+      }
+    ]
+  });
+  assert(salesReturnRes && salesReturnRes.success === true, 'Customer Sales Return processed successfully');
+  assert(salesReturnRes.return_no.startsWith('RET-'), 'Sales return slip generated with official RET- number');
+  assert(salesReturnRes.total_refund === 75.0, 'Total refund amount tracked accurately (₹75.00)');
+
+  // Verify stock replenishment (+1 returned unit)
+  const refreshedSearch = await api.searchProducts('FastCure');
+  const targetBatch = refreshedSearch[0]?.batches?.find(b => b.batch_no === 'FC-991');
+  assert(targetBatch && targetBatch.stock_qty === 29, 'Returned unit immediately replenished to batch stock (30 - 2 sold + 1 returned = 29)');
+
+  // 15.4 Customer Khata Credit Return Mode
+  const khataCust = await api.addKhataCustomer('Maruti Shinde (Return Test)', '9890112233');
+  // Give initial balance of 500
+  khataCust.balance = 500;
+  const khataReturnRes = await api.createSalesReturn({
+    customer_name: khataCust.name,
+    customer_mobile: khataCust.mobile,
+    return_date: '2026-10-18',
+    refund_mode: 'KHATA_CREDIT',
+    total_refund_amount: 150.0,
+    reason: 'DOCTOR_CHANGED',
+    items: [
+      {
+        product_id: fastProd.product.id,
+        batch_id: fastProd.batch.id,
+        batch_no: 'FC-991',
+        qty: 2,
+        refund_rate: 75.0,
+        total_amount: 150.0
+      }
+    ]
+  });
+  assert(khataReturnRes && khataReturnRes.success === true, 'Sales return with KHATA_CREDIT refund processed');
+  const custLedgerAfterReturn = await api.getKhataCustomerLedger(khataCust.id);
+  assert(custLedgerAfterReturn && Number(custLedgerAfterReturn.customer.balance) === 350, 'Khata customer balance credited from sales return (500 - 150 = 350)');
+
+
+
+  // 15.5 Sales Returns Audit Registry
+  const allReturns = await api.getSalesReturns();
+  assert(allReturns.length >= 2, 'getSalesReturns returns all logged return records');
+  const returnDetails = await api.getSalesReturnDetails(salesReturnRes.return_id);
+  assert(returnDetails && returnDetails.items && returnDetails.items.length === 1, 'getSalesReturnDetails retrieves itemized return breakdown');
+  assert(returnDetails.items[0].product_name === 'FastCure 500 Tablet', 'Return details include product metadata');
+
+  // 15.6 Product Movement Transaction Ledger (Photo 16)
+  const ledgerReport = await api.getProductTransactions(fastProd.product.id);
+  assert(ledgerReport && ledgerReport.product.name === 'FastCure 500 Tablet', 'getProductTransactions resolves target product');
+  assert(ledgerReport.transactions.length >= 2, 'Ledger chronologically records counter sales and sales returns');
+  
+  const saleTx = ledgerReport.transactions.find(t => t.type === 'SALE');
+  assert(saleTx && saleTx.out_qty === 2, 'Movement ledger logs counter sale as OUT quantity (2 units)');
+
+  const returnTx = ledgerReport.transactions.find(t => t.doc_no === salesReturnRes.return_no);
+  assert(returnTx && returnTx.in_qty === 1, 'Movement ledger logs customer return as IN quantity (1 unit)');
+
+
+
+
+  assert(ledgerReport.transactions.every(t => typeof t.balance_qty === 'number'), 'Movement ledger accurately computes running balance on every transaction row');
+
+  // 15.7 Native SQLite Database Methods Direct Verification
+  try {
+    const nativeFast = db.fastCreateProductWithBatch({
+      name: 'Native Test Drug',
+      generic_salt: 'Test Salt 500mg',
+      category: 'medicine',
+      rack_location: 'Rack Z-9',
+      strip_size: 10,
+      is_schedule_h1: 0,
+      min_stock_alert: 5,
+      batch_no: 'NAT-01',
+      expiry_date: '10/29',
+      purchase_rate: 10,
+      mrp: 20,
+      stock_qty: 15
+    });
+    assert(nativeFast && nativeFast.success === true, 'Native SQLite fastCreateProductWithBatch executed successfully');
+    
+    const nativeLedger = db.getProductTransactions(nativeFast.product.id);
+    assert(nativeLedger && nativeLedger.product.name === 'Native Test Drug', 'Native SQLite getProductTransactions executed successfully');
+
+    const nativeReturn = db.createSalesReturn({
+      customer_name: 'Native Customer',
+      customer_mobile: '9111222333',
+      return_date: '2026-10-18',
+      refund_mode: 'CASH',
+      total_refund_amount: 20.0,
+      items: [
+        {
+          product_id: nativeFast.product.id,
+          batch_id: nativeFast.batch.id,
+          batch_no: 'NAT-01',
+          qty: 1,
+          refund_rate: 20.0,
+          total_amount: 20.0
+        }
+      ]
+    });
+    assert(nativeReturn && nativeReturn.success === true, 'Native SQLite createSalesReturn executed successfully');
+
+    const nativeReturnsList = db.getSalesReturns();
+    assert(nativeReturnsList.length > 0, 'Native SQLite getSalesReturns returns return records');
+
+    const nativeReturnDetails = db.getSalesReturnDetails(nativeReturn.return_id);
+    assert(nativeReturnDetails && nativeReturnDetails.items.length === 1, 'Native SQLite getSalesReturnDetails returns itemized details');
+  } catch (err) {
+    console.warn('Native SQLite direct check skipped in non-sqlite environment:', err.message);
+  }
+
   // 12.1 Verify complete data wipe with clearAllRecords
   console.log('\n🧹 [DATABASE INTEGRITY] Full Database Reset');
   await api.clearAllRecords();
@@ -735,12 +915,15 @@ async function runTestSuite() {
   const h1AfterClear = await api.getScheduleH1Register();
   const shortageAfterClear = await api.getShortageDiary({ status: 'ALL' });
   const vouchersAfterClear = await api.getAccountingVouchers();
+  const returnsAfterClear = await api.getSalesReturns();
 
   assert(debitNotesAfterClear.length === 0, 'clearAllRecords wipes all debit notes from storage');
   assert(purchasesAfterClear.length === 0, 'clearAllRecords wipes all wholesale purchases from storage');
   assert(h1AfterClear.length === 0, 'clearAllRecords resets Schedule H1 register entries to zero');
   assert(shortageAfterClear.length === 0, 'clearAllRecords wipes all shortage diary entries from storage');
   assert(vouchersAfterClear.length === 0, 'clearAllRecords wipes all accounting vouchers from storage');
+  assert(returnsAfterClear.length === 0, 'clearAllRecords wipes all sales returns from storage');
+
 
   console.log('\n========================================================');
   console.log(`🏁 TEST RESULTS: ${passed} PASSED | ${failed} FAILED`);

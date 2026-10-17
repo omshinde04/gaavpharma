@@ -82,6 +82,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createAccountingVoucher: (data) => ipcRenderer.invoke('db:createAccountingVoucher', data),
   deleteAccountingVoucher: (id) => ipcRenderer.invoke('db:deleteAccountingVoucher', id),
 
+  // Phase 2: Stock Ledger, Fast Product Creation & Sales Returns
+  fastCreateProductWithBatch: (data) => ipcRenderer.invoke('db:fastCreateProductWithBatch', data),
+  getProductTransactions: (productId, batchId) => ipcRenderer.invoke('db:getProductTransactions', productId, batchId),
+  createSalesReturn: (data) => ipcRenderer.invoke('db:createSalesReturn', data),
+  getSalesReturns: () => ipcRenderer.invoke('db:getSalesReturns'),
+  getSalesReturnDetails: (returnId) => ipcRenderer.invoke('db:getSalesReturnDetails', returnId),
+
+
   // Backup & Disaster Recovery Engine
   getAvailableBackupDrives: () => ipcRenderer.invoke('db:getAvailableBackupDrives'),
   createDatabaseBackup: (options) => ipcRenderer.invoke('db:createDatabaseBackup', options),

@@ -209,6 +209,31 @@ function createTables() {
       total_amount REAL NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS sales_returns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      return_no TEXT UNIQUE NOT NULL,
+      original_invoice_no TEXT,
+      customer_name TEXT DEFAULT 'Cash Customer',
+      customer_mobile TEXT,
+      return_date TEXT NOT NULL,
+      refund_mode TEXT CHECK(refund_mode IN ('CASH', 'KHATA_CREDIT', 'UPI')) DEFAULT 'CASH',
+      total_refund_amount REAL NOT NULL,
+      reason TEXT DEFAULT 'PATIENT_UNUSED',
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sales_return_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sales_return_id INTEGER NOT NULL REFERENCES sales_returns(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      batch_id INTEGER REFERENCES batches(id),
+      batch_no TEXT NOT NULL,
+      qty INTEGER NOT NULL,
+      refund_rate REAL NOT NULL,
+      total_amount REAL NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS customers_khata (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -2574,6 +2599,329 @@ function deleteAccountingVoucher(id) {
   return { success: true };
 }
 
+// -------------------------------------------------------------
+// PHASE 2: ADVANCED COUNTER, STOCK LEDGER & RETURNS ENGINE
+// -------------------------------------------------------------
+
+function fastCreateProductWithBatch(data) {
+  if (!db) initDatabase();
+  const tx = db.transaction(() => {
+    const prodStmt = db.prepare(`
+      INSERT INTO products (barcode, name, generic_salt, category, rack_location, strip_size, is_schedule_h1, min_stock_alert)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const prodRes = prodStmt.run(
+      data.barcode || null,
+      data.name.trim(),
+      data.generic_salt?.trim() || null,
+      data.category || 'medicine',
+      data.rack_location?.trim() || 'Rack A-1',
+      parseInt(data.strip_size, 10) || 10,
+      data.is_schedule_h1 ? 1 : 0,
+      parseInt(data.min_stock_alert, 10) || 5
+    );
+    const productId = prodRes.lastInsertRowid;
+
+    const batchStmt = db.prepare(`
+      INSERT INTO batches (product_id, batch_no, expiry_date, purchase_rate, mrp, stock_qty)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const batchRes = batchStmt.run(
+      productId,
+      data.batch_no?.trim() || 'BATCH-01',
+      data.expiry_date?.trim() || '12/28',
+      parseFloat(data.purchase_rate) || 0,
+      parseFloat(data.mrp) || 0,
+      parseInt(data.stock_qty, 10) || 0
+    );
+    const batchId = batchRes.lastInsertRowid;
+
+    return {
+      success: true,
+      product: {
+        id: productId,
+        name: data.name.trim(),
+        generic_salt: data.generic_salt?.trim() || null,
+        category: data.category || 'medicine',
+        rack_location: data.rack_location?.trim() || 'Rack A-1',
+        strip_size: parseInt(data.strip_size, 10) || 10,
+        is_schedule_h1: data.is_schedule_h1 ? 1 : 0,
+        min_stock_alert: parseInt(data.min_stock_alert, 10) || 5,
+        total_stock: parseInt(data.stock_qty, 10) || 0
+      },
+      batch: {
+        id: batchId,
+        product_id: productId,
+        batch_no: data.batch_no?.trim() || 'BATCH-01',
+        expiry_date: data.expiry_date?.trim() || '12/28',
+        purchase_rate: parseFloat(data.purchase_rate) || 0,
+        mrp: parseFloat(data.mrp) || 0,
+        stock_qty: parseInt(data.stock_qty, 10) || 0
+      }
+    };
+  });
+
+  return tx();
+}
+
+function getProductTransactions(productId, batchId = null) {
+  if (!db) initDatabase();
+  const product = db.prepare(`
+    SELECT p.*, COALESCE(SUM(b.stock_qty), 0) as total_stock
+    FROM products p
+    LEFT JOIN batches b ON b.product_id = p.id
+    WHERE p.id = ?
+    GROUP BY p.id
+  `).get(productId);
+
+  if (!product) return null;
+
+  const batches = db.prepare(`
+    SELECT * FROM batches WHERE product_id = ? ORDER BY id ASC
+  `).all(productId);
+
+  // 1. Inward Purchases
+  let purchaseQuery = `
+    SELECT 
+      p.invoice_date as date,
+      'PURCHASE' as type,
+      p.purchase_invoice_no as doc_no,
+      d.name as party_name,
+      pi.batch_no,
+      (pi.qty + pi.free_qty) as in_qty,
+      0 as out_qty,
+      pi.purchase_rate as rate,
+      pi.mrp,
+      pi.total_amount,
+      p.created_at
+    FROM purchase_items pi
+    JOIN purchases p ON p.id = pi.purchase_id
+    JOIN distributors d ON d.id = p.distributor_id
+    WHERE pi.product_id = ?
+  `;
+  const purchaseParams = [productId];
+  if (batchId) {
+    const selectedBatch = batches.find(b => b.id === Number(batchId));
+    if (selectedBatch) {
+      purchaseQuery += ` AND pi.batch_no = ?`;
+      purchaseParams.push(selectedBatch.batch_no);
+    }
+  }
+
+  // 2. Counter Sales
+  let saleQuery = `
+    SELECT 
+      substr(inv.created_at, 1, 10) as date,
+      'SALE' as type,
+      inv.invoice_no as doc_no,
+      inv.customer_name as party_name,
+      b.batch_no,
+      0 as in_qty,
+      ii.qty as out_qty,
+      ii.unit_price as rate,
+      b.mrp,
+      ii.total_price as total_amount,
+      inv.created_at
+    FROM invoice_items ii
+    JOIN invoices inv ON inv.id = ii.invoice_id
+    LEFT JOIN batches b ON b.id = ii.batch_id
+    WHERE ii.product_id = ?
+  `;
+  const saleParams = [productId];
+  if (batchId) {
+    saleQuery += ` AND ii.batch_id = ?`;
+    saleParams.push(batchId);
+  }
+
+  // 3. Expiry Returns (Debit Notes)
+  let debitQuery = `
+    SELECT 
+      dn.note_date as date,
+      'DEBIT_NOTE_RETURN' as type,
+      dn.note_no as doc_no,
+      d.name as party_name,
+      dni.batch_no,
+      0 as in_qty,
+      dni.qty as out_qty,
+      dni.purchase_rate as rate,
+      0 as mrp,
+      dni.total_amount,
+      dn.created_at
+    FROM debit_note_items dni
+    JOIN debit_notes dn ON dn.id = dni.debit_note_id
+    JOIN distributors d ON d.id = dn.distributor_id
+    WHERE dni.product_id = ?
+  `;
+  const debitParams = [productId];
+  if (batchId) {
+    const selectedBatch = batches.find(b => b.id === Number(batchId));
+    if (selectedBatch) {
+      debitQuery += ` AND dni.batch_no = ?`;
+      debitParams.push(selectedBatch.batch_no);
+    }
+  }
+
+  // 4. Sales Returns (Customer returns)
+  let salesReturnQuery = `
+    SELECT 
+      sr.return_date as date,
+      'SALES_RETURN' as type,
+      sr.return_no as doc_no,
+      sr.customer_name as party_name,
+      sri.batch_no,
+      sri.qty as in_qty,
+      0 as out_qty,
+      sri.refund_rate as rate,
+      0 as mrp,
+      sri.total_amount,
+      sr.created_at
+    FROM sales_return_items sri
+    JOIN sales_returns sr ON sr.id = sri.sales_return_id
+    WHERE sri.product_id = ?
+  `;
+  const returnParams = [productId];
+  if (batchId) {
+    salesReturnQuery += ` AND sri.batch_id = ?`;
+    returnParams.push(batchId);
+  }
+
+  const purchasesList = db.prepare(purchaseQuery).all(...purchaseParams);
+  const salesList = db.prepare(saleQuery).all(...saleParams);
+  const debitsList = db.prepare(debitQuery).all(...debitParams);
+  let returnsList = [];
+  try {
+    returnsList = db.prepare(salesReturnQuery).all(...returnParams);
+  } catch {}
+
+  const allTxns = [...purchasesList, ...salesList, ...debitsList, ...returnsList];
+  allTxns.sort((a, b) => new Date(a.created_at || a.date).getTime() - new Date(b.created_at || b.date).getTime());
+
+  // Compute running balance
+  let runningBalance = 0;
+  const transactionsWithBalance = allTxns.map((tx, idx) => {
+    runningBalance += (tx.in_qty || 0) - (tx.out_qty || 0);
+    return {
+      id: idx + 1,
+      ...tx,
+      balance_qty: runningBalance
+    };
+  });
+
+  return {
+    product,
+    batches,
+    transactions: transactionsWithBalance,
+    totalIn: allTxns.reduce((sum, tx) => sum + (tx.in_qty || 0), 0),
+    totalOut: allTxns.reduce((sum, tx) => sum + (tx.out_qty || 0), 0),
+    currentStock: product.total_stock
+  };
+}
+
+function createSalesReturn(data) {
+  if (!db) initDatabase();
+  const tx = db.transaction(() => {
+    const count = (db.prepare(`SELECT COUNT(*) as c FROM sales_returns`).get()?.c || 0) + 1;
+    const returnNo = `RET-${new Date().toISOString().slice(0, 7).replace('-', '')}-${String(count).padStart(4, '0')}`;
+
+
+    const returnDate = data.return_date || new Date().toISOString().slice(0, 10);
+    const refundMode = data.refund_mode || 'CASH';
+    const customerName = data.customer_name || 'Cash Customer';
+    const customerMobile = data.customer_mobile || null;
+    const totalRefund = parseFloat(data.total_refund_amount) || 0;
+
+    const insertReturn = db.prepare(`
+      INSERT INTO sales_returns (return_no, original_invoice_no, customer_name, customer_mobile, return_date, refund_mode, total_refund_amount, reason, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const returnRes = insertReturn.run(
+      returnNo,
+      data.original_invoice_no || null,
+      customerName,
+      customerMobile,
+      returnDate,
+      refundMode,
+      totalRefund,
+      data.reason || 'PATIENT_UNUSED',
+      data.notes || null
+    );
+
+    const returnId = returnRes.lastInsertRowid;
+
+    // Insert items and replenish batch stock
+    const insertItem = db.prepare(`
+      INSERT INTO sales_return_items (sales_return_id, product_id, batch_id, batch_no, qty, refund_rate, total_amount)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const updateBatch = db.prepare(`
+      UPDATE batches SET stock_qty = stock_qty + ? WHERE id = ?
+    `);
+
+    for (const it of (data.items || [])) {
+      insertItem.run(
+        returnId,
+        it.product_id,
+        it.batch_id || null,
+        it.batch_no || 'BATCH-01',
+        it.qty,
+        it.refund_rate || it.unit_price || 0,
+        it.total_amount || (it.qty * (it.refund_rate || it.unit_price || 0))
+      );
+
+      if (it.batch_id) {
+        updateBatch.run(it.qty, it.batch_id);
+      }
+    }
+
+    // If refund_mode is KHATA_CREDIT and customer_mobile is given:
+    if (refundMode === 'KHATA_CREDIT' && customerMobile) {
+      const cust = db.prepare(`SELECT * FROM customers_khata WHERE mobile = ?`).get(customerMobile);
+      if (cust) {
+        db.prepare(`UPDATE customers_khata SET balance = balance - ? WHERE id = ?`).run(totalRefund, cust.id);
+        db.prepare(`
+          INSERT INTO khata_transactions (customer_id, type, amount, note)
+          VALUES (?, 'CREDIT', ?, ?)
+        `).run(cust.id, totalRefund, `Sales Return #${returnNo}`);
+      }
+    }
+
+    return {
+      success: true,
+      return_id: returnId,
+      return_no: returnNo,
+      total_refund: totalRefund,
+      items_count: data.items?.length || 0
+    };
+  });
+
+  return tx();
+}
+
+function getSalesReturns() {
+  if (!db) initDatabase();
+  return db.prepare(`
+    SELECT sr.*, 
+      (SELECT COUNT(*) FROM sales_return_items sri WHERE sri.sales_return_id = sr.id) as items_count
+    FROM sales_returns sr
+    ORDER BY sr.id DESC
+  `).all();
+}
+
+function getSalesReturnDetails(returnId) {
+  if (!db) initDatabase();
+  const returnRecord = db.prepare(`SELECT * FROM sales_returns WHERE id = ?`).get(returnId);
+  if (!returnRecord) return null;
+  const items = db.prepare(`
+    SELECT sri.*, p.name as product_name, p.generic_salt, p.rack_location
+    FROM sales_return_items sri
+    JOIN products p ON p.id = sri.product_id
+    WHERE sri.sales_return_id = ?
+  `).all(returnId);
+  return { ...returnRecord, items };
+}
+
 function clearAllRecords() {
   if (!db) initDatabase();
   db.prepare(`DELETE FROM invoice_items`).run();
@@ -2587,6 +2935,10 @@ function clearAllRecords() {
   db.prepare(`DELETE FROM distributor_ledger`).run();
   db.prepare(`DELETE FROM shortage_diary`).run();
   db.prepare(`DELETE FROM accounting_vouchers`).run();
+  try {
+    db.prepare(`DELETE FROM sales_return_items`).run();
+    db.prepare(`DELETE FROM sales_returns`).run();
+  } catch {}
   db.prepare(`UPDATE distributors SET pending_balance = 0`).run();
   return { success: true };
 }
@@ -2973,6 +3325,11 @@ module.exports = {
   getAccountingVouchers,
   createAccountingVoucher,
   deleteAccountingVoucher,
+  fastCreateProductWithBatch,
+  getProductTransactions,
+  createSalesReturn,
+  getSalesReturns,
+  getSalesReturnDetails,
   clearAllRecords,
   getAvailableBackupDrives,
   pruneOldBackups,
@@ -2981,3 +3338,4 @@ module.exports = {
   restoreDatabaseFromBackup,
   getLastBackupTimestamp
 };
+

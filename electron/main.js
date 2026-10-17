@@ -143,6 +143,14 @@ function setupIpcHandlers() {
   ipcMain.handle('db:createAccountingVoucher', (_, data) => db.createAccountingVoucher(data));
   ipcMain.handle('db:deleteAccountingVoucher', (_, id) => db.deleteAccountingVoucher(id));
 
+  // Phase 2: Stock Ledger, Fast Product Creation & Sales Returns
+  ipcMain.handle('db:fastCreateProductWithBatch', (_, data) => db.fastCreateProductWithBatch(data));
+  ipcMain.handle('db:getProductTransactions', (_, productId, batchId) => db.getProductTransactions(productId, batchId));
+  ipcMain.handle('db:createSalesReturn', (_, data) => db.createSalesReturn(data));
+  ipcMain.handle('db:getSalesReturns', () => db.getSalesReturns());
+  ipcMain.handle('db:getSalesReturnDetails', (_, returnId) => db.getSalesReturnDetails(returnId));
+
+
   // Backup & Disaster Recovery Engine
   ipcMain.handle('db:getAvailableBackupDrives', () => db.getAvailableBackupDrives());
   ipcMain.handle('db:createDatabaseBackup', (_, options) => db.createDatabaseBackup(options));

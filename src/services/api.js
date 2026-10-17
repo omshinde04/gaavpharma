@@ -495,6 +495,17 @@ const loadFallbackVouchers = () => {
   return [...DEFAULT_VOUCHERS];
 };
 
+const loadFallbackSalesReturns = () => {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('gaavpharma_sales_returns') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  return [];
+};
+
 // In-memory fallback mock with localStorage persistence for web dev preview
 const fallbackStorage = {
   license: loadFallbackLicense(),
@@ -510,9 +521,11 @@ const fallbackStorage = {
   debitNotes: loadFallbackDebitNotes(),
   shortageDiary: loadFallbackShortageDiary(),
   vouchers: loadFallbackVouchers(),
+  salesReturns: loadFallbackSalesReturns(),
   backupLogs: [],
   lastBackupTime: null
 };
+
 
 export const api = {
   isElectron,
@@ -993,9 +1006,10 @@ export const api = {
 
     // Deduct stock from products & batches
     items.forEach(cartItem => {
-      const p = fallbackStorage.products.find(prod => prod.id === cartItem.id || prod.name === cartItem.name);
+      const p = fallbackStorage.products.find(prod => prod.id === cartItem.product_id || prod.id === cartItem.id || prod.name === cartItem.product_name || prod.name === cartItem.name);
       if (p) {
         const b = p.batches.find(batch => batch.id === cartItem.batch_id || batch.batch_no === cartItem.batch_no) || p.batches[0];
+
         if (b) {
           const qtyToDeduct = cartItem.is_loose_tablet ? Math.ceil(cartItem.qty / (p.strip_size || 10)) : cartItem.qty;
           b.stock_qty = Math.max(0, b.stock_qty - qtyToDeduct);
@@ -1137,13 +1151,14 @@ export const api = {
   addKhataCustomer: async (name, mobile) => {
     if (isElectron) return window.electronAPI.addKhataCustomer(name, mobile);
     const newCust = {
-      id: Date.now(),
+      id: Date.now() + Math.floor(Math.random() * 100000) + 1,
       name,
       mobile,
       balance: 0,
       last_activity: new Date().toISOString()
     };
     fallbackStorage.customers.push(newCust);
+
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('gaavpharma_customers', JSON.stringify(fallbackStorage.customers));
@@ -2193,6 +2208,305 @@ export const api = {
     return { success: true };
   },
 
+  // Phase 2: Stock Ledger, Fast Product Creation & Sales Returns
+  fastCreateProductWithBatch: async (data) => {
+    if (isElectron && window.electronAPI?.fastCreateProductWithBatch) {
+      return window.electronAPI.fastCreateProductWithBatch(data);
+    }
+    const productId = Date.now();
+    const batchId = Date.now() + 1;
+    const batchQty = parseInt(data.stock_qty, 10) || 0;
+    const newBatch = {
+      id: batchId,
+      product_id: productId,
+      batch_no: data.batch_no?.trim() || 'BATCH-01',
+      expiry_date: data.expiry_date?.trim() || '12/28',
+      purchase_rate: parseFloat(data.purchase_rate) || 0,
+      mrp: parseFloat(data.mrp) || 0,
+      stock_qty: batchQty
+    };
+    const newProduct = {
+      id: productId,
+      barcode: data.barcode || null,
+      name: data.name.trim(),
+      generic_salt: data.generic_salt?.trim() || null,
+      category: data.category || 'medicine',
+      rack_location: data.rack_location?.trim() || 'Rack A-1',
+      strip_size: parseInt(data.strip_size, 10) || 10,
+      is_schedule_h1: data.is_schedule_h1 ? 1 : 0,
+      min_stock_alert: parseInt(data.min_stock_alert, 10) || 5,
+      total_stock: batchQty,
+      batches: [newBatch]
+    };
+    fallbackStorage.products.unshift(newProduct);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_products', JSON.stringify(fallbackStorage.products));
+      } catch (e) {}
+    }
+    return { success: true, product: newProduct, batch: newBatch };
+  },
+
+  getProductTransactions: async (productId, batchId = null) => {
+    if (isElectron && window.electronAPI?.getProductTransactions) {
+      return window.electronAPI.getProductTransactions(productId, batchId);
+    }
+    const pId = Number(productId);
+    const product = fallbackStorage.products.find(p => p.id === pId);
+    if (!product) return null;
+
+    const batches = product.batches || [];
+    const bId = batchId ? Number(batchId) : null;
+    const targetBatch = bId ? batches.find(b => b.id === bId) : null;
+    const targetBatchNo = targetBatch ? targetBatch.batch_no : null;
+
+    // 1. Inward Purchases
+    const purchases = [];
+    for (const pur of (fallbackStorage.purchases || [])) {
+      for (const item of (pur.items || [])) {
+        if (Number(item.product_id) === pId) {
+          if (!targetBatchNo || item.batch_no === targetBatchNo) {
+            purchases.push({
+              date: pur.invoice_date || pur.created_at?.slice(0, 10),
+              type: 'PURCHASE',
+              doc_no: pur.purchase_invoice_no || pur.bill_no,
+              party_name: pur.distributor_name || 'Distributor',
+              batch_no: item.batch_no,
+              in_qty: (parseInt(item.qty, 10) || 0) + (parseInt(item.free_qty, 10) || 0),
+              out_qty: 0,
+              rate: parseFloat(item.purchase_rate) || 0,
+              mrp: parseFloat(item.mrp) || 0,
+              total_amount: parseFloat(item.total_amount) || 0,
+              created_at: pur.created_at
+            });
+          }
+        }
+      }
+    }
+
+    // 2. Counter Sales
+    const sales = [];
+    for (const inv of (fallbackStorage.invoices || [])) {
+      for (const item of (inv.items || [])) {
+        if (Number(item.product_id) === pId) {
+          if (!bId || Number(item.batch_id) === bId) {
+            sales.push({
+              date: inv.created_at ? inv.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
+              type: 'SALE',
+              doc_no: inv.invoice_no,
+              party_name: inv.customer_name || 'Cash Customer',
+              batch_no: item.batch_no,
+              in_qty: 0,
+              out_qty: parseInt(item.qty, 10) || 0,
+              rate: parseFloat(item.unit_price) || 0,
+              mrp: parseFloat(item.mrp) || 0,
+              total_amount: parseFloat(item.total_price) || 0,
+              created_at: inv.created_at
+            });
+          }
+        }
+      }
+    }
+
+    // 3. Expiry Returns (Debit Notes)
+    const debits = [];
+    for (const dn of (fallbackStorage.debitNotes || [])) {
+      for (const item of (dn.items || [])) {
+        if (Number(item.product_id) === pId) {
+          if (!targetBatchNo || item.batch_no === targetBatchNo) {
+            debits.push({
+              date: dn.note_date || dn.created_at?.slice(0, 10),
+              type: 'DEBIT_NOTE_RETURN',
+              doc_no: dn.note_no,
+              party_name: dn.distributor_name || 'Distributor',
+              batch_no: item.batch_no,
+              in_qty: 0,
+              out_qty: parseInt(item.qty, 10) || 0,
+              rate: parseFloat(item.purchase_rate) || 0,
+              mrp: 0,
+              total_amount: parseFloat(item.total_amount) || 0,
+              created_at: dn.created_at
+            });
+          }
+        }
+      }
+    }
+
+    // 4. Sales Returns (Customer returns)
+    const returns = [];
+    for (const sr of (fallbackStorage.salesReturns || [])) {
+      for (const item of (sr.items || [])) {
+        if (Number(item.product_id) === pId) {
+          if (!bId || Number(item.batch_id) === bId) {
+            returns.push({
+              date: sr.return_date || sr.created_at?.slice(0, 10),
+              type: 'SALES_RETURN',
+              doc_no: sr.return_no,
+              party_name: sr.customer_name || 'Customer',
+              batch_no: item.batch_no,
+              in_qty: parseInt(item.qty, 10) || 0,
+              out_qty: 0,
+              rate: parseFloat(item.refund_rate) || 0,
+              mrp: 0,
+              total_amount: parseFloat(item.total_amount) || 0,
+              created_at: sr.created_at
+            });
+          }
+        }
+      }
+    }
+
+    const allTxns = [...purchases, ...sales, ...debits, ...returns];
+    allTxns.sort((a, b) => new Date(a.created_at || a.date).getTime() - new Date(b.created_at || b.date).getTime());
+
+    let runningBalance = 0;
+    const transactionsWithBalance = allTxns.map((tx, idx) => {
+      runningBalance += (tx.in_qty || 0) - (tx.out_qty || 0);
+      return {
+        id: idx + 1,
+        ...tx,
+        balance_qty: runningBalance
+      };
+    });
+
+    const totalIn = allTxns.reduce((sum, tx) => sum + (tx.in_qty || 0), 0);
+    const totalOut = allTxns.reduce((sum, tx) => sum + (tx.out_qty || 0), 0);
+
+    return {
+      product,
+      batches,
+      transactions: transactionsWithBalance,
+      totalIn,
+      totalOut,
+      currentStock: product.total_stock
+    };
+  },
+
+  createSalesReturn: async (data) => {
+    if (isElectron && window.electronAPI?.createSalesReturn) {
+      return window.electronAPI.createSalesReturn(data);
+    }
+    const returnId = Date.now();
+    const returnSeq = (fallbackStorage.salesReturns?.length || 0) + 1;
+    const returnNo = `RET-${new Date().toISOString().slice(0, 7).replace('-', '')}-${String(returnSeq).padStart(4, '0')}`;
+    const returnDate = data.return_date || new Date().toISOString().slice(0, 10);
+
+
+    const refundMode = data.refund_mode || 'CASH';
+    const customerName = data.customer_name || 'Cash Customer';
+    const customerMobile = data.customer_mobile || null;
+    const totalRefund = parseFloat(data.total_refund_amount) || 0;
+
+    const items = (data.items || []).map((it, idx) => {
+      const qty = parseInt(it.qty, 10) || 0;
+      const rate = parseFloat(it.refund_rate || it.unit_price) || 0;
+      const amount = it.total_amount ? parseFloat(it.total_amount) : (qty * rate);
+
+      // Replenish stock in fallbackStorage.products
+      const prod = fallbackStorage.products.find(p => p.id === Number(it.product_id));
+      if (prod) {
+        if (prod.batches) {
+          const b = prod.batches.find(batch => batch.id === Number(it.batch_id) || batch.batch_no === it.batch_no);
+          if (b) {
+            b.stock_qty = (b.stock_qty || 0) + qty;
+          }
+        }
+        prod.total_stock = (prod.batches || []).reduce((sum, b) => sum + (b.stock_qty || 0), 0);
+      }
+
+      return {
+        id: returnId + idx + 1,
+        sales_return_id: returnId,
+        product_id: Number(it.product_id),
+        batch_id: it.batch_id ? Number(it.batch_id) : null,
+        batch_no: it.batch_no || 'BATCH-01',
+        qty,
+        refund_rate: rate,
+        total_amount: amount
+      };
+    });
+
+    const returnRecord = {
+      id: returnId,
+      return_no: returnNo,
+      original_invoice_no: data.original_invoice_no || null,
+      customer_name: customerName,
+      customer_mobile: customerMobile,
+      return_date: returnDate,
+      refund_mode: refundMode,
+      total_refund_amount: totalRefund,
+      reason: data.reason || 'PATIENT_UNUSED',
+      notes: data.notes || null,
+      items,
+      created_at: new Date().toISOString()
+    };
+
+    if (!fallbackStorage.salesReturns) fallbackStorage.salesReturns = [];
+    fallbackStorage.salesReturns.unshift(returnRecord);
+
+    // If KHATA_CREDIT, credit customer balance
+    if (refundMode === 'KHATA_CREDIT' && customerMobile) {
+      const cust = (fallbackStorage.customers || []).find(c => c.mobile === customerMobile);
+      if (cust) {
+        cust.balance = Math.max(0, (cust.balance || 0) - totalRefund);
+        if (!cust.ledger) cust.ledger = [];
+        cust.ledger.unshift({
+          id: Date.now(),
+          type: 'CREDIT',
+          amount: totalRefund,
+          balance: cust.balance,
+          note: `Sales Return #${returnNo}`,
+          date: new Date().toISOString()
+        });
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_sales_returns', JSON.stringify(fallbackStorage.salesReturns));
+        localStorage.setItem('gaavpharma_products', JSON.stringify(fallbackStorage.products));
+        localStorage.setItem('gaavpharma_customers', JSON.stringify(fallbackStorage.customers));
+      } catch (e) {}
+    }
+
+    return {
+      success: true,
+      return_id: returnId,
+      return_no: returnNo,
+      total_refund: totalRefund,
+      items_count: items.length
+    };
+  },
+
+  getSalesReturns: async () => {
+    if (isElectron && window.electronAPI?.getSalesReturns) {
+      return window.electronAPI.getSalesReturns();
+    }
+    return (fallbackStorage.salesReturns || []).map(sr => ({
+      ...sr,
+      items_count: sr.items?.length || 0
+    }));
+  },
+
+  getSalesReturnDetails: async (returnId) => {
+    if (isElectron && window.electronAPI?.getSalesReturnDetails) {
+      return window.electronAPI.getSalesReturnDetails(returnId);
+    }
+    const rId = Number(returnId);
+    const found = (fallbackStorage.salesReturns || []).find(r => r.id === rId);
+    if (!found) return null;
+    const items = (found.items || []).map(it => {
+      const prod = fallbackStorage.products.find(p => p.id === Number(it.product_id));
+      return {
+        ...it,
+        product_name: prod ? prod.name : 'Unknown Product',
+        generic_salt: prod ? prod.generic_salt : '',
+        rack_location: prod ? prod.rack_location : ''
+      };
+    });
+    return { ...found, items };
+  },
+
   // Clear All Records / Reset Ledger
   clearAllRecords: async () => {
     if (isElectron) return window.electronAPI.clearAllRecords();
@@ -2203,6 +2517,7 @@ export const api = {
     fallbackStorage.distributorLedger = [];
     fallbackStorage.shortageDiary = [];
     fallbackStorage.vouchers = [];
+    fallbackStorage.salesReturns = [];
     fallbackStorage.distributors.forEach(d => { d.pending_balance = 0; });
 
     if (typeof window !== 'undefined') {
@@ -2214,11 +2529,13 @@ export const api = {
         localStorage.setItem('gaavpharma_distributor_ledger', JSON.stringify([]));
         localStorage.setItem('gaavpharma_shortage_diary', JSON.stringify([]));
         localStorage.setItem('gaavpharma_vouchers', JSON.stringify([]));
+        localStorage.setItem('gaavpharma_sales_returns', JSON.stringify([]));
         localStorage.setItem('gaavpharma_distributors', JSON.stringify(fallbackStorage.distributors));
       } catch (e) {}
     }
     return { success: true };
   },
+
 
   // System
   openExternalUrl: (url) => {

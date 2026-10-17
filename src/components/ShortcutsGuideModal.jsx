@@ -32,14 +32,17 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
   const billingShortcuts = [
     { key: 'Alt+1..0', alt: '1-10 Slots', label: '१० ग्राहक बिल स्लॉट (10 Multi-Bill Slots)', desc: '१० स्वतंत्र ग्राहकांची बिले एकाच वेळी सुरू ठेवा व १ सेकंदात स्विच करा' },
     { key: 'F2', alt: 'Ctrl+N', label: 'नवीन बिल (New Bill)', desc: 'काऊंटर रिकामे करून नवीन ग्राहकाचे बिल सुरू करा' },
-    { key: 'F3', alt: 'Cycle Slot', label: 'पुढील स्लॉट (Next Customer Slot)', desc: 'पुढच्या ग्राहकाच्या चालू बिलावर सायकल करा' },
+    { key: 'F3 / Ins', alt: 'Fast Item', label: 'जलद औषध व बॅच नोंद (In-Line Fast Item)', desc: 'काऊंटर न सोडता ५ सेकंदात औषध व बॅच तयार करून थेट बिलात जोडा' },
     { key: 'F4', alt: 'Ctrl+F / /', label: 'औषध शोध (Search Medicine)', desc: 'औषध शोधणे व बारकोड स्कॅनिंग इनपुटवर त्वरित फोकस करा' },
+    { key: 'Alt+T', alt: 'Stock Ledger', label: 'औषध स्टॉक व ट्रॅन्झॅक्शन लेजर (Item Movement)', desc: 'खरेदी, विक्री, सप्लायर डेबिट व ग्राहक परताव्याची ऐतिहासिक नोंदवही' },
+    { key: 'Alt+R', alt: 'Sales Return', label: 'ग्राहक औषध रिटर्न / क्रेडिट नोट (Sales Return)', desc: 'उरलेले औषध जमा करून स्टॉक वाढवा आणि रोख/खाते परतावा द्या' },
     { key: '↑ / ↓', alt: 'Arrow Keys', label: 'यादी नेव्हिगेशन (Navigate List)', desc: 'माऊस न वापरता औषध शोध ड्रॉपडाउनमधून औषध निवडा' },
     { key: 'Enter', alt: 'Available Stock', label: 'बॅच पॉप-अप व निवड (Available Stock)', desc: 'FEFO नुसार योग्य बॅच निवडून त्वरित बिलात जोडा' },
     { key: 'F8', alt: 'Alt+P', label: 'पेमेंट मोड बदला (Cycle Payment)', desc: 'रोख (Cash) ➔ UPI ➔ खाते (Khata) ➔ कार्ड मध्ये टॉगल करा' },
     { key: 'F9', alt: 'Ctrl+Enter', label: 'विक्री पूर्ण व प्रिंट (Complete Sale)', desc: 'बिल पूर्ण करून थर्मल पावती त्वरित प्रिंट करा' },
     { key: 'Alt+H', alt: 'FDA Rx', label: 'रुग्ण / डॉक्टर माहिती (Patient/Doctor)', desc: 'Schedule H1 साठी डॉक्टर व रुग्णाच्या नावावर फोकस करा' },
   ];
+
 
   const accountingShortcuts = [
     { key: 'F5', label: 'पेमेंट व्हाउचर (Payment Voucher)', desc: 'दुकान खर्च (लाईट, चहा, पगार) किंवा डिस्ट्रीब्यूटरचे देणे चुकता करा' },

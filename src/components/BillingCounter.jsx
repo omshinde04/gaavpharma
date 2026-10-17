@@ -33,6 +33,10 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
+import FastProductCreateModal from './FastProductCreateModal';
+import ProductTransactionsModal from './ProductTransactionsModal';
+import SalesReturnModal from './SalesReturnModal';
+
 
 // Helper to create an empty multi-bill slot (Slots 1 to 10)
 const createEmptySlot = (id) => ({
@@ -108,6 +112,13 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
   // Receipt Modal
   const [completedInvoice, setCompletedInvoice] = useState(null);
 
+  // Phase 2 Modals State (Photos 8, 9, 16, 17, 19)
+  const [fastProductModalOpen, setFastProductModalOpen] = useState(false);
+  const [fastProductInitialName, setFastProductInitialName] = useState('');
+  const [transactionsModal, setTransactionsModal] = useState(null); // { productId, productName, batchId }
+  const [salesReturnModalOpen, setSalesReturnModalOpen] = useState(false);
+
+
   const barcodeBufferRef = useRef('');
   const lastKeyTimeRef = useRef(0);
   const searchInputRef = useRef(null);
@@ -143,6 +154,43 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     });
   };
 
+  // Phase 2 Handlers: Fast Product Add & Stock Ledger
+  const openFastProductModal = (name = '') => {
+    setFastProductInitialName(name || searchQuery || '');
+    setFastProductModalOpen(true);
+  };
+
+  const handleFastProductCreated = (product, batch) => {
+    const stripSize = product.strip_size || 10;
+    const unitPrice = batch.mrp || 0;
+    const newItem = {
+      product_id: product.id,
+      product_name: product.name,
+      generic_salt: product.generic_salt,
+      category: product.category,
+      company: 'General',
+      rack_location: product.rack_location || 'Rack A-1',
+      strip_size: stripSize,
+      is_schedule_h1: product.is_schedule_h1,
+      batch_id: batch.id,
+      batch_no: batch.batch_no,
+      expiry_date: batch.expiry_date,
+      all_batches: [batch],
+      is_loose_tablet: false,
+      qty: 1,
+      unit_price: unitPrice,
+      total_price: Number(unitPrice.toFixed(2))
+    };
+    updateActiveSlot({ cart: [newItem, ...cart] });
+    setSearchQuery('');
+    setSearchResults([]);
+    searchInputRef.current?.focus();
+  };
+
+  const openTransactionsModal = (productId, productName, batchId = null) => {
+    setTransactionsModal({ productId, productName, batchId });
+  };
+
   // Keyboard Shortcuts (F-Keys, Alt+1..0 for Slots, Enter-Flow)
   useEffect(() => {
     const handleKeyDown = async (e) => {
@@ -166,10 +214,30 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         return;
       }
 
-      // F3: Cycle to Next Slot
-      if (e.key === 'F3') {
+      // F3 or Insert: Fast Product & Batch Creation (Photos 8 & 9)
+      if (e.key === 'F3' || e.key === 'Insert') {
         e.preventDefault();
-        setActiveSlotIdx((prev) => (prev + 1) % 10);
+        openFastProductModal(searchQuery);
+        return;
+      }
+
+      // Alt+T: Open Product Movement Transaction Ledger (Photo 16)
+      if (e.altKey && (e.key === 't' || e.key === 'T')) {
+        e.preventDefault();
+        if (focusedProduct) {
+          openTransactionsModal(focusedProduct.id, focusedProduct.name);
+        } else if (cart.length > 0) {
+          openTransactionsModal(cart[0].product_id, cart[0].product_name, cart[0].batch_id);
+        } else {
+          openFastProductModal(searchQuery);
+        }
+        return;
+      }
+
+      // Alt+R: Open Customer Sales Return / Credit Note (Photos 17 & 19)
+      if (e.altKey && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        setSalesReturnModalOpen(true);
         return;
       }
 
@@ -229,7 +297,8 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeSlotIdx, slots, batchSelectModal, shiftItemModal]);
+  }, [activeSlotIdx, slots, batchSelectModal, shiftItemModal, focusedProduct, cart, searchQuery]);
+
 
   const cyclePaymentMode = () => {
     const modes = allowKhata ? ['cash', 'upi', 'khata', 'card'] : ['cash', 'upi', 'card'];
@@ -640,17 +709,53 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
           );
         })}
 
-        {/* Live Active Slot Running Total Display (Photo 7: "3 => 0.00") */}
-        <div className="ml-auto flex items-center space-x-3 text-xs shrink-0">
+        {/* Phase 2: Action Buttons & Live Active Slot Running Total */}
+        <div className="ml-auto flex items-center space-x-2 text-xs shrink-0">
+          <button
+            onClick={() => openFastProductModal(searchQuery)}
+            className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-mono font-bold text-xs flex items-center space-x-1.5 shadow-2xs transition-all"
+            title="Fast Add Medicine & Batch (F3 / Ins)"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ Fast Item (F3)</span>
+          </button>
+
+          <button
+            onClick={() => setSalesReturnModalOpen(true)}
+            className="px-2.5 py-1 rounded-md bg-purple-100 hover:bg-purple-200 text-purple-900 border border-purple-300 font-mono font-bold text-xs flex items-center space-x-1.5 transition-all"
+            title="Customer Sales Return & Credit Note (Alt+R)"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-purple-700" />
+            <span>Return (Alt+R)</span>
+          </button>
+
+          <button
+            onClick={() => {
+              if (focusedProduct) {
+                openTransactionsModal(focusedProduct.id, focusedProduct.name);
+              } else if (cart.length > 0) {
+                openTransactionsModal(cart[0].product_id, cart[0].product_name, cart[0].batch_id);
+              } else {
+                openFastProductModal(searchQuery);
+              }
+            }}
+            className="px-2.5 py-1 rounded-md bg-blue-100 hover:bg-blue-200 text-blue-900 border border-blue-300 font-mono font-bold text-xs flex items-center space-x-1.5 transition-all"
+            title="Product Movement Transaction Ledger (Alt+T)"
+          >
+            <FileText className="w-3.5 h-3.5 text-blue-700" />
+            <span>Ledger (Alt+T)</span>
+          </button>
+
           <div className="px-3 py-1 rounded-md bg-emerald-50 border border-emerald-300 text-emerald-800 font-mono font-bold text-xs flex items-center space-x-2">
             <span>Slot {activeSlotIdx + 1} =&gt;</span>
             <span className="text-emerald-950 text-sm font-extrabold">₹{netPayable.toFixed(2)}</span>
           </div>
-          <span className="text-[10px] text-slate-500 font-mono hidden lg:inline">
-            Alt+1..0: Slots • Alt+P: Mode • F9: Print
+          <span className="text-[10px] text-slate-500 font-mono hidden xl:inline">
+            F3: Add • Alt+T: Ledger • Alt+R: Return • F9: Print
           </span>
         </div>
       </div>
+
 
       {/* 2. TOP FAST SEARCH & MEDICINE AUTOCOMPLETE BAR (Stage 1) */}
       <div className="p-2.5 bg-white border-b border-slate-200 flex items-center justify-between gap-3 shrink-0">
@@ -747,7 +852,25 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
               })}
             </div>
           )}
+
+          {/* Empty Search: Fast Add Item Prompt (Photo 8 & 9) */}
+          {searchQuery.trim().length > 1 && searchResults.length === 0 && !isSearching && (
+            <div className="absolute left-0 right-0 mt-1 bg-white rounded-xl shadow-2xl border border-slate-200 p-4 z-40 text-center animate-in fade-in duration-100 font-mono">
+              <p className="text-xs text-slate-600 mb-2 font-medium">
+                '{searchQuery}' औषध उपलब्ध नाही (Medicine not found in stock)
+              </p>
+              <button
+                type="button"
+                onClick={() => openFastProductModal(searchQuery)}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs inline-flex items-center gap-2 shadow-sm transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                <span>नवीन औषध व बॅच त्वरित तयार करा (F3 / Ins)</span>
+              </button>
+            </div>
+          )}
         </div>
+
 
         {/* Quick Clear Current Bill Button (F2) */}
         <button
@@ -875,16 +998,29 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                       <td className="py-2 px-3 text-right font-bold text-emerald-700">
                         ₹{Number(item.total_price).toFixed(2)}
                       </td>
-                      <td className="py-2 px-3 text-center">
-                        <button
-                          onClick={() => openShiftItemDialog(idx)}
-                          className="px-2 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 hover:text-blue-900 border border-blue-200 text-[10px] font-semibold flex items-center justify-center space-x-1 mx-auto transition-colors"
-                          title="Shift item to another customer bill"
-                        >
-                          <ArrowRightLeft className="w-3 h-3 text-blue-600" />
-                          <span>Shift</span>
-                        </button>
+                      <td className="py-2 px-3 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => openTransactionsModal(item.product_id, item.product_name, item.batch_id)}
+                            className="px-2 py-1 rounded bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-900 border border-slate-300 hover:border-blue-300 text-[10px] font-semibold flex items-center gap-1 transition-colors"
+                            title="View Stock Ledger (Alt+T)"
+                          >
+                            <FileText className="w-3 h-3 text-blue-600" />
+                            <span>Ledger</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openShiftItemDialog(idx)}
+                            className="px-2 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 hover:text-blue-900 border border-blue-200 text-[10px] font-semibold flex items-center justify-center space-x-1 transition-colors"
+                            title="Shift item to another customer bill"
+                          >
+                            <ArrowRightLeft className="w-3 h-3 text-blue-600" />
+                            <span>Shift</span>
+                          </button>
+                        </div>
                       </td>
+
                       <td className="py-2 px-3 text-center">
                         <button
                           onClick={() => removeCartItem(idx)}
@@ -1097,11 +1233,15 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
       <div className="bg-white border-t border-slate-200 px-4 py-1.5 flex items-center justify-between text-[11px] font-mono text-slate-600 shrink-0 select-none">
         <div className="flex items-center space-x-3 overflow-x-auto">
           <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">F2</kbd> New Bill</span>
+          <span><kbd className="bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-900 font-bold border border-emerald-300 shadow-2xs">F3</kbd> Fast Item</span>
           <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">F4</kbd> Search</span>
-          <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">Alt+1..0</kbd> Slots 1-10</span>
+          <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">Alt+1..0</kbd> Slots</span>
+          <span><kbd className="bg-blue-100 px-1.5 py-0.5 rounded text-blue-900 font-bold border border-blue-300 shadow-2xs">Alt+T</kbd> Ledger</span>
+          <span><kbd className="bg-purple-100 px-1.5 py-0.5 rounded text-purple-900 font-bold border border-purple-300 shadow-2xs">Alt+R</kbd> Return</span>
           <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">F8</kbd> Mode ({paymentMode.toUpperCase()})</span>
-          <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">F9</kbd> Complete (Enter)</span>
+          <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">F9</kbd> Complete</span>
         </div>
+
         <div className="text-[10px] text-emerald-700 font-bold hidden sm:inline">
           ⚡ 100% Zero-Mouse Counter
         </div>
@@ -1403,6 +1543,34 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         </div>
       )}
 
+      {/* Phase 2: In-Line Fast Product & Batch Creation (Photos 8 & 9 - F3 / Ins) */}
+      <FastProductCreateModal
+        isOpen={fastProductModalOpen}
+        initialName={fastProductInitialName}
+        onClose={() => setFastProductModalOpen(false)}
+        onProductCreated={handleFastProductCreated}
+      />
+
+      {/* Phase 2: Product Movement Transaction Ledger (Photo 16 - Alt+T) */}
+      <ProductTransactionsModal
+        isOpen={!!transactionsModal}
+        productId={transactionsModal?.productId}
+        productName={transactionsModal?.productName}
+        initialBatchId={transactionsModal?.batchId}
+        onClose={() => setTransactionsModal(null)}
+      />
+
+      {/* Phase 2: Customer Sales Return / Credit Note (Photos 17 & 19 - Alt+R) */}
+      <SalesReturnModal
+        isOpen={salesReturnModalOpen}
+        onClose={() => setSalesReturnModalOpen(false)}
+        onReturnCompleted={(res) => {
+          setShortageToast(`रिटर्न नोंद #${res.return_no} यशस्वी!`);
+          setTimeout(() => setShortageToast(null), 4000);
+        }}
+      />
+
     </div>
+
   );
 }
