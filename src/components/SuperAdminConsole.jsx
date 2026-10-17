@@ -33,19 +33,17 @@ export default function SuperAdminConsole({
 }) {
   const [activeTab, setActiveTab] = useState('provision'); // 'provision' | 'generator' | 'renewal' | 'clients'
 
-  // Provisioning Form State
+  // Provisioning Form State - starts completely blank for testing
   const [provisionData, setProvisionData] = useState({
-    storeName: currentStoreProfile?.store_name && currentStoreProfile.store_name !== 'Anand Medical & General Stores'
-      ? currentStoreProfile.store_name
-      : 'Om Medical Stores',
-    dlNumber: currentStoreProfile?.dl_number || '20B/21B-MH-SOL-194829',
-    gstin: currentStoreProfile?.gstin || '27AABCA1234F1Z9',
-    address: currentStoreProfile?.address || 'Near Bus Stand, Main Road',
-    ownerPhone: currentStoreProfile?.phone || '+91 98220 12345',
-    upiId: currentStoreProfile?.upi_id || 'ommedical@oksbi',
-    ownerName: 'Om Shinde',
-    ownerUsername: 'om_admin',
-    ownerPin: '1111',
+    storeName: '',
+    dlNumber: '',
+    gstin: '',
+    address: '',
+    ownerPhone: '',
+    upiId: '',
+    ownerName: '',
+    ownerUsername: '',
+    ownerPin: '',
     plan: 'annual',
     days: 365
   });
@@ -55,8 +53,8 @@ export default function SuperAdminConsole({
   const [copiedSlip, setCopiedSlip] = useState(false);
 
   // Manual Key Generator State
-  const [targetStore, setTargetStore] = useState('Mauli Medical Stores');
-  const [targetPhone, setTargetPhone] = useState('9422011223');
+  const [targetStore, setTargetStore] = useState('');
+  const [targetPhone, setTargetPhone] = useState('');
   const [targetHwid, setTargetHwid] = useState('ALL');
   const [targetPlan, setTargetPlan] = useState('annual');
   const [targetDays, setTargetDays] = useState(365);
@@ -64,41 +62,20 @@ export default function SuperAdminConsole({
   const [copiedKey, setCopiedKey] = useState(false);
 
   // Renewal Code Generator State
-  const [renewalStore, setRenewalStore] = useState('Om Medical Stores');
+  const [renewalStore, setRenewalStore] = useState('');
   const [renewalDays, setRenewalDays] = useState(365);
   const [generatedRenewal, setGeneratedRenewal] = useState('');
   const [copiedRenewal, setCopiedRenewal] = useState(false);
 
-  // Sample Registered Buyers
-  const [clients, setClients] = useState([
-    {
-      id: 1,
-      name: currentStoreProfile?.store_name || 'Om Medical Stores',
-      owner: 'Om Shinde',
-      phone: '9822012345',
-      plan: '1-Year Pro',
-      expires: '17 Oct 2027',
-      status: 'ACTIVE'
-    },
-    {
-      id: 2,
-      name: 'Mauli Medical Stores',
-      owner: 'Suresh Deshmukh',
-      phone: '9422011223',
-      plan: '1-Year Pro',
-      expires: '10 Nov 2027',
-      status: 'ACTIVE'
-    },
-    {
-      id: 3,
-      name: 'Shree Ganesh Chemist',
-      owner: 'Ganesh Kulkarni',
-      phone: '9860044556',
-      plan: '14-Day Trial',
-      expires: '28 Oct 2026',
-      status: 'TRIAL'
+  // Registered Buyers - Starts 100% empty until you provision a store
+  const [clients, setClients] = useState(() => {
+    try {
+      const saved = localStorage.getItem('gaavpharma_provisioned_clients');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
     }
-  ]);
+  });
 
   const handleProvisionSubmit = async (e) => {
     e.preventDefault();
@@ -111,6 +88,23 @@ export default function SuperAdminConsole({
     try {
       const res = await api.provisionStore(provisionData);
       setProvisionResult(res);
+
+      const planName = provisionData.plan === 'trial' ? '14-Day Trial' : (provisionData.plan === 'lifetime' ? 'Lifetime' : '1-Year Pro');
+      const newClient = {
+        id: Date.now(),
+        name: res.storeProfile.store_name,
+        owner: res.storeOwner.display_name,
+        phone: res.storeProfile.phone,
+        plan: planName,
+        expires: new Date(Date.now() + (provisionData.days || 365) * 86400000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+        status: 'ACTIVE'
+      };
+      const updatedClients = [newClient, ...clients.filter(c => c.name !== res.storeProfile.store_name)];
+      setClients(updatedClients);
+      try {
+        localStorage.setItem('gaavpharma_provisioned_clients', JSON.stringify(updatedClients));
+      } catch (e) {}
+
       if (onStoreProvisioned) {
         onStoreProvisioned(res.storeProfile, res.licenseStatus);
       }
@@ -735,34 +729,66 @@ export default function SuperAdminConsole({
                   <h3 className="font-bold text-sm text-white">Registered Client Stores</h3>
                   <p className="text-xs text-slate-400">Track active pharmacy subscriptions and renewal dates</p>
                 </div>
+                {clients.length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (confirm('Clear all client store records from directory?')) {
+                        setClients([]);
+                        localStorage.removeItem('gaavpharma_provisioned_clients');
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 rounded text-xs font-mono"
+                  >
+                    Clear Directory
+                  </button>
+                )}
               </div>
 
-              <div className="border border-slate-800 rounded-xl overflow-hidden divide-y divide-slate-800/80 bg-slate-900">
-                {clients.map((c) => (
-                  <div key={c.id} className="p-4 flex items-center justify-between hover:bg-slate-800/50 transition-colors">
-                    <div>
-                      <div className="font-semibold text-white text-xs flex items-center gap-2">
-                        <span>{c.name}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
-                          {c.status}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-400 font-mono mt-1 flex items-center gap-3">
-                        <span>Owner: {c.owner}</span>
-                        <span>•</span>
-                        <span>Phone: {c.phone}</span>
-                        <span>•</span>
-                        <span>Plan: {c.plan}</span>
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <div className="text-xs font-mono text-slate-300 font-medium">Expires: {c.expires}</div>
-                      <span className="text-[10px] text-emerald-400 font-medium">Licensed Active</span>
-                    </div>
+              {clients.length === 0 ? (
+                <div className="text-center py-16 border border-dashed border-slate-800 rounded-2xl bg-slate-900/30 p-8 space-y-3">
+                  <div className="w-12 h-12 rounded-xl bg-purple-900/30 border border-purple-500/20 text-purple-400 flex items-center justify-center mx-auto">
+                    <Building2 className="w-6 h-6" />
                   </div>
-                ))}
-              </div>
+                  <h4 className="font-bold text-white text-sm">No Client Stores Provisioned Yet</h4>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+                    You haven't onboarded any pharmacies yet. Go to "Provision & Onboard Store" to add your first buyer store!
+                  </p>
+                  <button
+                    onClick={() => setActiveTab('provision')}
+                    className="mt-3 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold shadow-md transition-all inline-flex items-center gap-1.5"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                    <span>+ Provision First Store</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="border border-slate-800 rounded-xl overflow-hidden divide-y divide-slate-800/80 bg-slate-900">
+                  {clients.map((c) => (
+                    <div key={c.id} className="p-4 flex items-center justify-between hover:bg-slate-800/50 transition-colors">
+                      <div>
+                        <div className="font-semibold text-white text-xs flex items-center gap-2">
+                          <span>{c.name}</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                            {c.status}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-mono mt-1 flex items-center gap-3">
+                          <span>Owner: {c.owner}</span>
+                          <span>•</span>
+                          <span>Phone: {c.phone}</span>
+                          <span>•</span>
+                          <span>Plan: {c.plan}</span>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <div className="text-xs font-mono text-slate-300 font-medium">Expires: {c.expires}</div>
+                        <span className="text-[10px] text-emerald-400 font-medium">Licensed Active</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </main>

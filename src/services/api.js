@@ -4,31 +4,14 @@ const isElectron = typeof window !== 'undefined' && window.electronAPI !== undef
 
 // In-memory fallback mock for development/browser preview if not in Electron
 const fallbackStorage = {
-  license: {
-    isValid: true,
-    isTrial: false,
-    daysRemaining: 364,
-    status: 'ACTIVE',
-    storeName: 'om Medical Stores',
-    hardwareId: 'GP-4298-D340-0C93',
-    ownerPhone: '+91 98220 12345',
-    expiresAt: new Date(Date.now() + 364 * 86400000).toISOString(),
-    plan: 'annual',
-    features: {
-      loose_tablets: true,
-      expiry_radar: true,
-      family_khata: true,
-      whatsapp_bills: true,
-      custom_discounts: true
-    }
-  },
+  license: null,
   storeProfile: {
-    store_name: 'om Medical Stores',
-    dl_number: '20B/21B-MH-SOL-194829',
-    gstin: '27AABCA1234F1Z9',
-    address: 'Near Bus Stand, Main Road',
-    phone: '+91 98220 12345',
-    upi_id: 'anandmedical@oksbi',
+    store_name: '',
+    dl_number: '',
+    gstin: '',
+    address: '',
+    phone: '',
+    upi_id: '',
     printer_type: '80mm',
     auto_print: 0
   },
