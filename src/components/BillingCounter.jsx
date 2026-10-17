@@ -37,9 +37,9 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
   const isCashier = currentUser?.role?.toLowerCase() === 'cashier';
   const maxCashierDiscount = Number(featureToggles?.max_cashier_discount ?? 10);
 
-  // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [isSearching, setIsSearching] = useState(false);
   const [substitutesModal, setSubstitutesModal] = useState(null);
 
@@ -71,26 +71,32 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
   // Receipt Modal
   const [completedInvoice, setCompletedInvoice] = useState(null);
 
-  // Barcode scanner buffer
   const barcodeBufferRef = useRef('');
   const lastKeyTimeRef = useRef(0);
   const searchInputRef = useRef(null);
+  const customerMobileRef = useRef(null);
 
   // Global Barcode Scanner Listener & Hotkeys
   useEffect(() => {
     const handleKeyDown = async (e) => {
-      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey;
 
-      if (e.key === 'F2') {
+      // F2 or Ctrl+N: New Bill
+      if (e.key === 'F2' || (isCtrlOrMeta && (e.key === 'n' || e.key === 'N'))) {
         e.preventDefault();
         handleNewSale();
         return;
       }
-      if (e.key === 'F4') {
+
+      // F4 or Ctrl+F: Focus Search & Barcode
+      if (e.key === 'F4' || (isCtrlOrMeta && (e.key === 'f' || e.key === 'F'))) {
         e.preventDefault();
         searchInputRef.current?.focus();
+        searchInputRef.current?.select();
         return;
       }
+
+      // F6: Hold Bill or Show Held Bills Queue
       if (e.key === 'F6') {
         e.preventDefault();
         if (cart.length > 0) {
@@ -100,16 +106,29 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         }
         return;
       }
-      if (e.key === 'F8') {
+
+      // F8 or Alt+P: Cycle Payment Mode
+      if (e.key === 'F8' || (e.altKey && (e.key === 'p' || e.key === 'P'))) {
         e.preventDefault();
         cyclePaymentMode();
         return;
       }
-      if (e.key === 'F9') {
+
+      // F9 or Ctrl+Enter: Complete Sale & Print
+      if (e.key === 'F9' || (isCtrlOrMeta && e.key === 'Enter')) {
         e.preventDefault();
         handleCompleteSale();
         return;
       }
+
+      // Alt+H: Jump to Patient / Doctor Rx Details
+      if (e.altKey && (e.key === 'h' || e.key === 'H')) {
+        e.preventDefault();
+        customerMobileRef.current?.focus();
+        return;
+      }
+
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
 
       // Scanner keystroke timing
       const currentTime = Date.now();
@@ -153,6 +172,7 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         try {
           const res = await api.searchProducts(searchQuery);
           setSearchResults(res || []);
+          setHighlightedIndex(0);
         } catch (err) {
           console.error(err);
         } finally {
@@ -160,11 +180,42 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         }
       } else {
         setSearchResults([]);
+        setHighlightedIndex(0);
       }
     }, 120);
 
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  const handleSearchInputKeyDown = (e) => {
+    if (searchResults.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setHighlightedIndex((prev) => (prev + 1) % searchResults.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setHighlightedIndex((prev) => (prev - 1 + searchResults.length) % searchResults.length);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const selectedProd = searchResults[highlightedIndex] || searchResults[0];
+        if (selectedProd) {
+          addItemToCart(selectedProd, false);
+          setSearchQuery('');
+          setSearchResults([]);
+        }
+        return;
+      }
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setSearchQuery('');
+      setSearchResults([]);
+    }
+  };
 
   // Khata balance lookup
   useEffect(() => {
@@ -498,13 +549,14 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search medicine, salt, or scan barcode... (F4)"
+              onKeyDown={handleSearchInputKeyDown}
+              placeholder="औषध शोधा किंवा बारकोड स्कॅन करा... (F4)"
               className="w-full pl-10 pr-28 py-2 bg-slate-50 hover:bg-slate-100/60 focus:bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-900 placeholder-slate-400 focus:border-emerald-600 transition-all"
               autoFocus
             />
             <div className="absolute right-2.5 flex items-center space-x-1.5 text-xs text-slate-400 font-mono">
               <span className="bg-slate-100 text-slate-500 border border-slate-200/80 px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1">
-                <Barcode className="w-3 h-3 text-slate-400" /> Scanner Ready
+                <Barcode className="w-3 h-3 text-slate-400" /> ↑↓ नेव्हिगेट • Enter निवडा
               </span>
             </div>
           </div>
@@ -512,15 +564,20 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
           {/* Instant Search Results Dropdown */}
           {searchResults.length > 0 && (
             <div className="absolute left-0 right-0 mt-1.5 bg-white rounded-xl shadow-xl border border-slate-200 max-h-96 overflow-y-auto z-40 divide-y divide-slate-100 animate-in fade-in duration-100">
-              {searchResults.map((prod) => {
+              {searchResults.map((prod, idx) => {
                 const totalStock = prod.total_stock || 0;
                 const activeBatch = prod.active_batch;
                 const isOutOfStock = totalStock <= 0;
+                const isHighlighted = highlightedIndex === idx;
 
                 return (
                   <div
                     key={prod.id}
-                    className="p-3 hover:bg-slate-50 transition-colors flex items-center justify-between cursor-pointer group"
+                    className={`p-3 transition-colors flex items-center justify-between cursor-pointer group ${
+                      isHighlighted
+                        ? 'bg-emerald-50/90 border-l-4 border-emerald-600 pl-2.5 ring-1 ring-emerald-300'
+                        : 'hover:bg-slate-50'
+                    }`}
                     onClick={() => addItemToCart(prod, false)}
                   >
                     <div className="flex-1 pr-3">
@@ -881,11 +938,12 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                 <div className="relative flex items-center">
                   <Phone className="w-3 h-3 absolute left-2.5 text-slate-400" />
                   <input
+                    ref={customerMobileRef}
                     type="tel"
                     maxLength="10"
                     value={customerMobile}
                     onChange={(e) => setCustomerMobile(e.target.value.replace(/\D/g, ''))}
-                    placeholder="10-digit mobile..."
+                    placeholder="10-digit mobile... (Alt+H)"
                     className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:bg-white transition-all"
                   />
                 </div>

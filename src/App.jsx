@@ -13,6 +13,7 @@ import SuperAdminHubModal from './components/SuperAdminHubModal';
 import SuperAdminConsole from './components/SuperAdminConsole';
 import LicenseActivationModal from './components/LicenseActivationModal';
 import BackupExitModal from './components/BackupExitModal';
+import ShortcutsGuideModal from './components/ShortcutsGuideModal';
 import { api } from './services/api';
 import { AlertCircle, Key } from 'lucide-react';
 
@@ -82,6 +83,7 @@ export default function App() {
   const [showSuperAdminHub, setShowSuperAdminHub] = useState(false);
   const [showLicenseModal, setShowLicenseModal] = useState(false);
   const [showBackupExitModal, setShowBackupExitModal] = useState(false);
+  const [showShortcutsGuide, setShowShortcutsGuide] = useState(false);
 
   // Load app data
   const loadAppData = useCallback(async () => {
@@ -113,29 +115,58 @@ export default function App() {
   // Global Keyboard Shortcuts (F2, F3, F4, F5, Shift+L)
   useEffect(() => {
     const handleGlobalKeys = (e) => {
-      // Lock Terminal: Shift + L
+      // 1. Help Guide: F1 or '?'
+      if (e.key === 'F1' || (e.key === '?' && !e.target.matches('input, textarea'))) {
+        e.preventDefault();
+        setShowShortcutsGuide((prev) => !prev);
+        return;
+      }
+
+      // 2. Lock Terminal & Daily Exit Backup: Shift + L
       if (e.shiftKey && (e.key === 'L' || e.key === 'l') && !e.target.matches('input, textarea')) {
         e.preventDefault();
         setShowBackupExitModal(true);
         return;
       }
 
+      // 3. Escape: Close open modals
+      if (e.key === 'Escape') {
+        if (showShortcutsGuide) { setShowShortcutsGuide(false); return; }
+        if (showBackupExitModal) { setShowBackupExitModal(false); return; }
+        if (showStoreSettings) { setShowStoreSettings(false); return; }
+        if (showLicenseModal) { setShowLicenseModal(false); return; }
+        if (showSuperAdminHub) { setShowSuperAdminHub(false); return; }
+      }
+
       // If not logged in, don't allow module switching
       if (!currentUser) return;
 
+      // 4. Ctrl + Number Navigation (MediVision style fast switching)
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+        if (e.key === '1') { e.preventDefault(); setActiveTab('billing'); return; }
+        if (e.key === '2') { e.preventDefault(); setActiveTab('expiry'); return; }
+        if (e.key === '3') { e.preventDefault(); setActiveTab('inventory'); return; }
+        if (e.key === '4') { e.preventDefault(); setActiveTab('khata'); return; }
+        if (e.key === '5') { e.preventDefault(); setActiveTab('purchases'); return; }
+        if (e.key === '6') { e.preventDefault(); setActiveTab('inventory'); return; }
+        if (e.key === '7') { e.preventDefault(); setActiveTab('compliance'); return; }
+      }
+
+      // 5. Function Key Module Switching
       if (e.key === 'F2') {
         setActiveTab('billing');
       } else if (e.key === 'F3') {
         setActiveTab('expiry');
-      } else if (e.key === 'F4' && !e.target.matches('input, textarea')) {
-        setActiveTab('inventory');
-      } else if (e.key === 'F7' && !e.target.matches('input, textarea')) {
-        e.preventDefault();
-        setActiveTab('purchases');
       } else if (e.key === 'F5') {
         e.preventDefault();
         setActiveTab('khata');
-      } else if (e.key === 'F8') {
+      } else if (e.key === 'F7' && !e.target.matches('input, textarea')) {
+        e.preventDefault();
+        setActiveTab('purchases');
+      } else if (e.key === 'F10') {
+        e.preventDefault();
+        setActiveTab('purchases');
+      } else if (e.key === 'F11') {
         e.preventDefault();
         setActiveTab('compliance');
       }
@@ -243,6 +274,7 @@ export default function App() {
         onOpenStoreSettings={() => setShowStoreSettings(true)}
         onOpenSuperAdminHub={() => setSuperAdminView('console')}
         onOpenLicenseModal={() => setShowLicenseModal(true)}
+        onOpenShortcutsGuide={() => setShowShortcutsGuide(true)}
       />
 
       {/* Main App Body */}
@@ -345,6 +377,12 @@ export default function App() {
         onClose={() => setShowBackupExitModal(false)}
         onConfirmLogout={handleLogout}
         storeProfile={storeProfile}
+      />
+
+      {/* Keyboard Shortcuts Cheatsheet Guide Modal (F1) */}
+      <ShortcutsGuideModal
+        isOpen={showShortcutsGuide}
+        onClose={() => setShowShortcutsGuide(false)}
       />
     </div>
   );

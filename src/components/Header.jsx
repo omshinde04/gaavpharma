@@ -9,7 +9,8 @@ import {
   Lock,
   Sliders,
   Crown,
-  Key
+  Key,
+  Keyboard
 } from 'lucide-react';
 
 export default function Header({
@@ -19,7 +20,8 @@ export default function Header({
   onLogout,
   onOpenStoreSettings,
   onOpenSuperAdminHub,
-  onOpenLicenseModal
+  onOpenLicenseModal,
+  onOpenShortcutsGuide
 }) {
   const [time, setTime] = useState(new Date());
 
@@ -100,6 +102,16 @@ export default function Header({
             <span className="text-[11px]">Store Admin</span>
           </button>
         )}
+
+        {/* Keyboard Shortcuts Guide Button */}
+        <button
+          onClick={onOpenShortcutsGuide}
+          className="flex items-center space-x-1 px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium shadow-2xs transition-colors"
+          title="कीबोर्ड शॉर्टकट कीज मार्गदर्शक (F1)"
+        >
+          <Keyboard className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="text-[11px] font-mono">F1 Keys</span>
+        </button>
 
         {/* Current Active User Pill */}
         <div className="flex items-center space-x-1.5 pl-2.5 pr-2 py-0.5 bg-slate-800/50 rounded-md border border-slate-700/40 text-xs text-slate-300">
