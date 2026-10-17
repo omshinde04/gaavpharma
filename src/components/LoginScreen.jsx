@@ -93,7 +93,7 @@ export default function LoginScreen({ onLoginSuccess, storeProfile, licenseStatu
             <Activity className="w-6 h-6 text-white" />
           </div>
           <h2 className="text-base font-bold tracking-tight text-white">
-            {storeProfile?.store_name || 'Anand Medical & General Stores'}
+            {storeProfile?.store_name || 'om Medical Stores'}
           </h2>
           <div className="flex items-center justify-center space-x-2 text-[11px] text-slate-400 font-mono">
             <span>DL: {storeProfile?.dl_number || '20B/21B-MH-SOL-194829'}</span>

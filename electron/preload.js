@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getLicenseStatus: () => ipcRenderer.invoke('auth:getLicenseStatus'),
   generateLicenseKey: (data) => ipcRenderer.invoke('auth:generateLicenseKey', data),
   activateLicense: (key) => ipcRenderer.invoke('auth:activateLicense', key),
+  provisionStore: (data) => ipcRenderer.invoke('auth:provisionStore', data),
   generateRenewalCode: (data) => ipcRenderer.invoke('auth:generateRenewalCode', data),
   applyRenewalCode: (code) => ipcRenderer.invoke('auth:applyRenewalCode', code),
 

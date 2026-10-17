@@ -29,7 +29,7 @@ export default function Header({
   }, []);
 
   const isSuperAdmin = currentUser?.role === 'super_admin';
-  const isStoreAdmin = currentUser?.role === 'store_admin' || isSuperAdmin;
+  const isStoreAdmin = currentUser?.role === 'store_admin';
 
   return (
     <header className="bg-slate-900 border-b border-slate-800 text-white px-4 py-2.5 flex items-center justify-between shadow-sm select-none shrink-0">
@@ -41,7 +41,7 @@ export default function Header({
         <div>
           <div className="flex items-center space-x-2">
             <h1 className="text-xs font-semibold tracking-tight text-white leading-tight">
-              {storeProfile?.store_name || 'Anand Medical & General Stores'}
+              {storeProfile?.store_name || 'om Medical Stores'}
             </h1>
             <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-medium px-1.5 py-0.2 rounded-full tracking-wide">
               Retail POS

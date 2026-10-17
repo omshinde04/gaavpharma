@@ -9,7 +9,7 @@ const fallbackStorage = {
     isTrial: false,
     daysRemaining: 364,
     status: 'ACTIVE',
-    storeName: 'Anand Medical & General Stores',
+    storeName: 'om Medical Stores',
     hardwareId: 'GP-4298-D340-0C93',
     ownerPhone: '+91 98220 12345',
     expiresAt: new Date(Date.now() + 364 * 86400000).toISOString(),
@@ -23,7 +23,7 @@ const fallbackStorage = {
     }
   },
   storeProfile: {
-    store_name: 'Anand Medical & General Stores',
+    store_name: 'om Medical Stores',
     dl_number: '20B/21B-MH-SOL-194829',
     gstin: '27AABCA1234F1Z9',
     address: 'Near Bus Stand, Main Road',
@@ -307,6 +307,73 @@ export const api = {
     fallbackStorage.license.isValid = true;
     fallbackStorage.license.status = 'ACTIVE';
     return fallbackStorage.license;
+  },
+
+  provisionStore: async (data) => {
+    if (isElectron) return window.electronAPI.provisionStore(data);
+    const {
+      storeName,
+      dlNumber,
+      gstin,
+      address,
+      ownerPhone,
+      upiId,
+      ownerName,
+      ownerUsername,
+      ownerPin,
+      plan = 'annual',
+      days = 365
+    } = data;
+
+    // 1. Update storeProfile
+    fallbackStorage.storeProfile = {
+      ...fallbackStorage.storeProfile,
+      store_name: storeName.trim(),
+      dl_number: dlNumber || '20B/21B-MH-SOL-194829',
+      gstin: gstin || '27AABCA1234F1Z9',
+      address: address || 'Main Road',
+      phone: ownerPhone || '+91 98220 12345',
+      upi_id: upiId || ''
+    };
+
+    // 2. Update license
+    fallbackStorage.license = {
+      ...fallbackStorage.license,
+      isValid: true,
+      status: 'ACTIVE',
+      storeName: storeName.trim(),
+      ownerPhone: ownerPhone || '',
+      plan: plan || 'annual',
+      daysRemaining: days || 365,
+      expiresAt: new Date(Date.now() + (days || 365) * 86400000).toISOString()
+    };
+
+    // 3. Upsert store_admin user
+    let owner = fallbackStorage.users.find((u) => u.role === 'store_admin');
+    if (owner) {
+      owner.display_name = ownerName.trim();
+      owner.username = (ownerUsername || 'store_admin').trim();
+      owner.pin_code = ownerPin.trim();
+      owner.is_active = 1;
+    } else {
+      owner = {
+        id: Date.now(),
+        username: (ownerUsername || 'store_admin').trim(),
+        display_name: ownerName.trim(),
+        pin_code: ownerPin.trim(),
+        role: 'store_admin',
+        is_active: 1
+      };
+      fallbackStorage.users.push(owner);
+    }
+
+    return {
+      success: true,
+      storeProfile: fallbackStorage.storeProfile,
+      licenseStatus: fallbackStorage.license,
+      storeOwner: owner,
+      licenseKey: 'GP-ACT-PROVISIONED-OK'
+    };
   },
 
   // Authentication & Users (RBAC)

@@ -612,6 +612,116 @@ function activateLicense(licenseKey) {
   return getLicenseStatus();
 }
 
+function provisionStore(data) {
+  if (!db) initDatabase();
+  const {
+    storeName,
+    dlNumber,
+    gstin,
+    address,
+    ownerPhone,
+    upiId,
+    ownerName,
+    ownerUsername,
+    ownerPin,
+    plan = 'annual',
+    days = 365
+  } = data;
+
+  if (!storeName || !ownerName || !ownerPin) {
+    throw new Error('Store name, owner name, and 4-digit PIN are required.');
+  }
+
+  // 1. Update store_profile
+  db.prepare(`
+    UPDATE store_profile
+    SET store_name = ?,
+        dl_number = ?,
+        gstin = ?,
+        address = ?,
+        phone = ?,
+        upi_id = ?
+    WHERE id = 1
+  `).run(
+    storeName.trim(),
+    (dlNumber || '20B/21B-MH-SOL-194829').trim(),
+    (gstin || '27AABCA1234F1Z9').trim(),
+    (address || 'Main Road').trim(),
+    (ownerPhone || '').trim(),
+    (upiId || '').trim()
+  );
+
+  // 2. Generate and activate valid license
+  const hwid = getHardwareId();
+  const expiresAt = new Date(Date.now() + (days || 365) * 86400000).toISOString();
+  const licPayload = {
+    storeName: storeName.trim(),
+    ownerPhone: (ownerPhone || '').trim(),
+    plan: plan || 'annual',
+    hardwareId: hwid,
+    features: {
+      loose_tablets: true,
+      expiry_radar: true,
+      family_khata: true,
+      whatsapp_bills: true,
+      custom_discounts: true
+    },
+    issuedAt: new Date().toISOString(),
+    expiresAt
+  };
+  const jsonStr = JSON.stringify(licPayload);
+  const b64 = Buffer.from(jsonStr).toString('base64url');
+  const sig = signPayload(jsonStr);
+  const licenseKey = `GP-ACT-${b64}.${sig}`;
+
+  db.prepare(`DELETE FROM license`).run();
+  db.prepare(`
+    INSERT INTO license (license_key, store_name, owner_phone, plan_type, hardware_id, activated_at, expires_at, last_checked_at, features_json, signature, status)
+    VALUES (?, ?, ?, ?, ?, datetime('now'), ?, datetime('now'), ?, ?, 'ACTIVE')
+  `).run(
+    licenseKey,
+    licPayload.storeName,
+    licPayload.ownerPhone || null,
+    licPayload.plan,
+    hwid,
+    expiresAt,
+    JSON.stringify(licPayload.features),
+    sig
+  );
+
+  // 3. Create or update store_admin user
+  const existingOwner = db.prepare(`SELECT * FROM users WHERE role = 'store_admin'`).get();
+  let ownerUser;
+  if (existingOwner) {
+    db.prepare(`
+      UPDATE users
+      SET display_name = ?,
+          username = ?,
+          pin_code = ?,
+          is_active = 1
+      WHERE id = ?
+    `).run(ownerName.trim(), (ownerUsername || 'store_admin').trim(), ownerPin.trim(), existingOwner.id);
+    ownerUser = db.prepare(`SELECT id, username, display_name, pin_code, role, is_active FROM users WHERE id = ?`).get(existingOwner.id);
+  } else {
+    const res = db.prepare(`
+      INSERT INTO users (username, display_name, pin_code, password_hash, role, is_active)
+      VALUES (?, ?, ?, 'owner123', 'store_admin', 1)
+    `).run((ownerUsername || 'store_admin').trim(), ownerName.trim(), ownerPin.trim());
+    ownerUser = db.prepare(`SELECT id, username, display_name, pin_code, role, is_active FROM users WHERE id = ?`).get(res.lastInsertRowid);
+  }
+
+  const updatedProfile = db.prepare(`SELECT * FROM store_profile WHERE id = 1`).get();
+  const updatedLicense = getLicenseStatus();
+
+  return {
+    success: true,
+    storeProfile: updatedProfile,
+    licenseStatus: updatedLicense,
+    storeOwner: ownerUser,
+    licenseKey
+  };
+}
+
 function generateRenewalCode(data) {
   const days = data.days || 365;
   const payload = {
@@ -1244,6 +1354,7 @@ module.exports = {
   getLicenseStatus,
   generateLicenseKey,
   activateLicense,
+  provisionStore,
   generateRenewalCode,
   applyRenewalCode,
   loginWithPin,

@@ -8,6 +8,7 @@ import DailyRegisterKhata from './components/DailyRegisterKhata';
 import LoginScreen from './components/LoginScreen';
 import StoreSettingsModal from './components/StoreSettingsModal';
 import SuperAdminHubModal from './components/SuperAdminHubModal';
+import SuperAdminConsole from './components/SuperAdminConsole';
 import LicenseActivationModal from './components/LicenseActivationModal';
 import { api } from './services/api';
 import { AlertCircle, Key } from 'lucide-react';
@@ -15,6 +16,7 @@ import { AlertCircle, Key } from 'lucide-react';
 export default function App() {
   const [activeTab, setActiveTab] = useState('billing'); // 'billing' | 'expiry' | 'inventory' | 'khata'
   const [expiryAlertCount, setExpiryAlertCount] = useState(0);
+  const [superAdminView, setSuperAdminView] = useState('console'); // 'console' | 'pos'
 
   // Auth & Multi-tenant State
   const [currentUser, setCurrentUser] = useState(() => {
@@ -101,14 +103,19 @@ export default function App() {
 
   const handleLoginSuccess = async (user) => {
     setCurrentUser(user);
+    if (user.role === 'super_admin') {
+      setSuperAdminView('console');
+    }
     try {
       localStorage.setItem('gaavpharma_active_user', JSON.stringify(user));
-      const [toggles, profile] = await Promise.all([
+      const [toggles, profile, license] = await Promise.all([
         api.getFeatureToggles(),
-        api.getStoreProfile()
+        api.getStoreProfile(),
+        api.getLicenseStatus()
       ]);
       if (toggles) setFeatureToggles(toggles);
       if (profile) setStoreProfile(profile);
+      if (license) setLicenseStatus(license);
     } catch (err) {
       console.error('Failed to persist session:', err);
     }
@@ -116,6 +123,7 @@ export default function App() {
 
   const handleLogout = () => {
     setCurrentUser(null);
+    setSuperAdminView('console');
     try {
       localStorage.removeItem('gaavpharma_active_user');
     } catch (err) {
@@ -130,6 +138,26 @@ export default function App() {
         storeProfile={storeProfile}
         licenseStatus={licenseStatus}
         onLoginSuccess={handleLoginSuccess}
+      />
+    );
+  }
+
+  // If Super Admin is logged in and in console mode, show the dedicated Provider Hub
+  if (currentUser?.role === 'super_admin' && superAdminView === 'console') {
+    return (
+      <SuperAdminConsole
+        currentUser={currentUser}
+        currentStoreProfile={storeProfile}
+        currentLicenseStatus={licenseStatus}
+        onLogout={handleLogout}
+        onEnterStorePos={() => setSuperAdminView('pos')}
+        onStoreProvisioned={(updatedProfile, updatedLicense) => {
+          setStoreProfile(updatedProfile);
+          setLicenseStatus(updatedLicense);
+        }}
+        onSwitchUser={(newUser) => {
+          handleLoginSuccess(newUser);
+        }}
       />
     );
   }
@@ -164,7 +192,7 @@ export default function App() {
         currentUser={currentUser}
         onLogout={handleLogout}
         onOpenStoreSettings={() => setShowStoreSettings(true)}
-        onOpenSuperAdminHub={() => setShowSuperAdminHub(true)}
+        onOpenSuperAdminHub={() => setSuperAdminView('console')}
         onOpenLicenseModal={() => setShowLicenseModal(true)}
       />
 

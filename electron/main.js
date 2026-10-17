@@ -67,6 +67,7 @@ function setupIpcHandlers() {
   ipcMain.handle('auth:getLicenseStatus', () => db.getLicenseStatus());
   ipcMain.handle('auth:generateLicenseKey', (_, data) => db.generateLicenseKey(data));
   ipcMain.handle('auth:activateLicense', (_, key) => db.activateLicense(key));
+  ipcMain.handle('auth:provisionStore', (_, data) => db.provisionStore(data));
   ipcMain.handle('auth:generateRenewalCode', (_, data) => db.generateRenewalCode(data));
   ipcMain.handle('auth:applyRenewalCode', (_, code) => db.applyRenewalCode(code));
 
