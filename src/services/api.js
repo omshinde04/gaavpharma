@@ -372,7 +372,8 @@ export const api = {
     const user = fallbackStorage.users.find(user => user.username.toLowerCase() === u && user.is_active);
     if (!user) return null;
     if (u === 'superadmin' && password === 'admin123') return user;
-    if (user.role === 'store_admin' && (password === 'owner123' || password === 'admin123')) return user;
+    if (user.role === 'store_admin' && (password === 'owner123' || password === 'admin123' || password === user.pin_code)) return user;
+    if (user.role === 'cashier' && (password === user.pin_code || password === 'cashier123')) return user;
     return null;
   },
 
