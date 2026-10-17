@@ -30,23 +30,31 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
   if (!isOpen) return null;
 
   const billingShortcuts = [
+    { key: 'Alt+1..0', alt: '1-10 Slots', label: '१० ग्राहक बिल स्लॉट (10 Multi-Bill Slots)', desc: '१० स्वतंत्र ग्राहकांची बिले एकाच वेळी सुरू ठेवा व १ सेकंदात स्विच करा' },
     { key: 'F2', alt: 'Ctrl+N', label: 'नवीन बिल (New Bill)', desc: 'काऊंटर रिकामे करून नवीन ग्राहकाचे बिल सुरू करा' },
+    { key: 'F3', alt: 'Cycle Slot', label: 'पुढील स्लॉट (Next Customer Slot)', desc: 'पुढच्या ग्राहकाच्या चालू बिलावर सायकल करा' },
     { key: 'F4', alt: 'Ctrl+F / /', label: 'औषध शोध (Search Medicine)', desc: 'औषध शोधणे व बारकोड स्कॅनिंग इनपुटवर त्वरित फोकस करा' },
     { key: '↑ / ↓', alt: 'Arrow Keys', label: 'यादी नेव्हिगेशन (Navigate List)', desc: 'माऊस न वापरता औषध शोध ड्रॉपडाउनमधून औषध निवडा' },
-    { key: 'Enter', alt: 'Return', label: 'औषध बिलात जोडा (Add to Cart)', desc: 'निवडलेले औषध थेट बिलामध्ये टाका' },
-    { key: 'F6', alt: 'Hold Bill', label: 'बिल होल्ड करा (Hold / Resume)', desc: 'गर्दीच्या वेळी चालू बिल होल्ड करा किंवा मागील बिल रिझ्युम करा' },
+    { key: 'Enter', alt: 'Available Stock', label: 'बॅच पॉप-अप व निवड (Available Stock)', desc: 'FEFO नुसार योग्य बॅच निवडून त्वरित बिलात जोडा' },
     { key: 'F8', alt: 'Alt+P', label: 'पेमेंट मोड बदला (Cycle Payment)', desc: 'रोख (Cash) ➔ UPI ➔ खाते (Khata) ➔ कार्ड मध्ये टॉगल करा' },
     { key: 'F9', alt: 'Ctrl+Enter', label: 'विक्री पूर्ण व प्रिंट (Complete Sale)', desc: 'बिल पूर्ण करून थर्मल पावती त्वरित प्रिंट करा' },
     { key: 'Alt+H', alt: 'FDA Rx', label: 'रुग्ण / डॉक्टर माहिती (Patient/Doctor)', desc: 'Schedule H1 साठी डॉक्टर व रुग्णाच्या नावावर फोकस करा' },
-    { key: 'Alt+S', alt: 'Shortage', label: 'तोटा नोंदवा (Add Shortage)', desc: 'साठा नसलेले औषध थेट तोटा नोंदवहीत जमा करा' },
+  ];
+
+  const accountingShortcuts = [
+    { key: 'F5', label: 'पेमेंट व्हाउचर (Payment Voucher)', desc: 'दुकान खर्च (लाईट, चहा, पगार) किंवा डिस्ट्रीब्यूटरचे देणे चुकता करा' },
+    { key: 'F6', label: 'पावती व्हाउचर (Receipt Voucher)', desc: 'खाते ग्राहकाकडून किंवा इतर मार्गाने रोख रक्कम जमा करा' },
+    { key: 'F4', label: 'कॉन्ट्रा व्हाउचर (Contra Transfer)', desc: 'काऊंटर गल्ला ते बँक खात्यात रक्कम जमा / काढण्याची नोंद' },
+    { key: 'F7', label: 'जर्नल व्हाउचर (Journal Entry)', desc: 'लेजर ॲडजस्टमेंट व खाती ताळमेळ नोंद' },
+    { key: 'F8 / Alt+C', label: 'डिफाईन क्रायटेरिया (Define Criterion)', desc: 'दिनांक, पेमेंट मोड व पार्टीनुसार रिपोर्ट फिल्टर व CSV एक्सपोर्ट' },
   ];
 
   const navigationShortcuts = [
     { key: 'F2 / Ctrl+1', label: 'काऊंटर बिलिंग (POS Counter)', desc: 'थेट रिटेल काऊंटर बिलिंगवर जा' },
     { key: 'F3 / Ctrl+2', label: 'एक्स्पायरी रडार (Expiry Radar)', desc: 'मुदत संपणारी औषधे व तोटा विश्लेषक' },
     { key: 'Ctrl+3', label: 'औषध साठा (Inventory Stock)', desc: 'सर्व औषधे, रॅक लोकेशन व बॅच व्यवस्थापन' },
-    { key: 'F5 / Ctrl+4', label: 'दैनिक खतावणी व गल्ला (Daily Register)', desc: 'दैनिक विक्री, रोख गल्ला व ग्राहक उधारी खाते' },
-    { key: 'F7 / Ctrl+5', label: 'घाऊक खरेदी (Purchases Inward)', desc: 'पुरवठादार बिले आवक व आपले देणे लेजर' },
+    { key: 'F5 / Ctrl+4', label: 'दैनिक खतावणी व व्हाउचर (Accounts & Vouchers)', desc: 'दैनिक विक्री, कॅशबुक व्हाउचर व ग्राहक उधारी खाते' },
+    { key: 'F7 / Ctrl+5', label: 'घाऊक खरेदी (Purchases Inward)', desc: 'पुरवठादार बिले आवक, जुने दर तुलना व पेंडिंग लेजर' },
     { key: 'F10 / Ctrl+6', label: 'तोटा नोंदवही (Shortage Diary)', desc: 'कमी साठा औषधे व व्हॉट्सॲप खरेदी ऑर्डर' },
     { key: 'F11 / Ctrl+7', label: 'FDA H1 व GST कर हब (Compliance)', desc: 'नियम ६५ रजिस्टर व GSTR-3B टॅक्स हब' },
   ];
@@ -125,11 +133,36 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
             </div>
           </div>
 
-          {/* Section 2: Navigation */}
+          {/* Section 2: MediVision Accounting Vouchers */}
+          <div className="space-y-3 pt-2 border-t border-slate-800">
+            <div className="flex items-center space-x-2 text-blue-400 font-bold uppercase tracking-wider text-[11px]">
+              <FileText className="w-4 h-4" />
+              <span>२. कॅशबुक, लेजर व व्हाउचर नोंद (MediVision Accounting Vouchers)</span>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+              {accountingShortcuts.map((item, idx) => (
+                <div
+                  key={idx}
+                  className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-start justify-between gap-3 hover:border-blue-500/40 transition-colors"
+                >
+                  <div className="space-y-0.5">
+                    <div className="font-semibold text-white text-xs">{item.label}</div>
+                    <div className="text-[11px] text-slate-400">{item.desc}</div>
+                  </div>
+                  <kbd className="px-2 py-1 rounded bg-slate-900 border border-slate-600 text-blue-300 font-mono font-bold text-xs shadow-xs shrink-0">
+                    {item.key}
+                  </kbd>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Section 3: Navigation */}
           <div className="space-y-3 pt-2 border-t border-slate-800">
             <div className="flex items-center space-x-2 text-indigo-400 font-bold uppercase tracking-wider text-[11px]">
               <Navigation className="w-4 h-4" />
-              <span>२. स्क्रीन व मॉड्यूल नेव्हिगेशन (Module Navigation)</span>
+              <span>३. स्क्रीन व मॉड्यूल नेव्हिगेशन (Module Navigation)</span>
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
@@ -150,11 +183,11 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
             </div>
           </div>
 
-          {/* Section 3: Safety & System */}
+          {/* Section 4: Safety & System */}
           <div className="space-y-3 pt-2 border-t border-slate-800">
             <div className="flex items-center space-x-2 text-teal-400 font-bold uppercase tracking-wider text-[11px]">
               <Shield className="w-4 h-4" />
-              <span>३. डेटा सुरक्षा व सिस्टम (Safety & System)</span>
+              <span>४. डेटा सुरक्षा व सिस्टम (Safety & System)</span>
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">

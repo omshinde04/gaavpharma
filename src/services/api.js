@@ -453,6 +453,48 @@ const loadFallbackShortageDiary = () => {
   return JSON.parse(JSON.stringify(INITIAL_SHORTAGE_DIARY));
 };
 
+const DEFAULT_VOUCHERS = [
+  {
+    id: 1,
+    voucher_no: 'PAY-0001',
+    voucher_type: 'PAYMENT',
+    date: new Date().toISOString().slice(0, 10),
+    party_type: 'EXPENSE',
+    party_id: null,
+    party_name: 'Shop Electricity / Light Bill (MSEDCL)',
+    amount: 1450.00,
+    payment_mode: 'CASH',
+    reference_no: 'MSEDCL-OCT-99',
+    narration: 'Monthly counter light bill paid in cash',
+    created_at: new Date(Date.now() - 3600000).toISOString()
+  },
+  {
+    id: 2,
+    voucher_no: 'PAY-0002',
+    voucher_type: 'PAYMENT',
+    date: new Date().toISOString().slice(0, 10),
+    party_type: 'EXPENSE',
+    party_id: null,
+    party_name: 'Tea, Coffee & Staff Refreshments',
+    amount: 120.00,
+    payment_mode: 'CASH',
+    reference_no: 'CASH-EXP',
+    narration: 'Morning & evening tea for counter staff',
+    created_at: new Date(Date.now() - 7200000).toISOString()
+  }
+];
+
+const loadFallbackVouchers = () => {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('gaavpharma_vouchers') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  return [...DEFAULT_VOUCHERS];
+};
+
 // In-memory fallback mock with localStorage persistence for web dev preview
 const fallbackStorage = {
   license: loadFallbackLicense(),
@@ -467,6 +509,7 @@ const fallbackStorage = {
   distributorLedger: loadFallbackDistributorLedger(),
   debitNotes: loadFallbackDebitNotes(),
   shortageDiary: loadFallbackShortageDiary(),
+  vouchers: loadFallbackVouchers(),
   backupLogs: [],
   lastBackupTime: null
 };
@@ -2024,6 +2067,132 @@ export const api = {
     return generateWhatsAppPOText({ storeProfile, distributor, items });
   },
 
+  // Accounting Vouchers & Cash/Bank Book (MediVision Parity)
+  getAccountingVouchers: async (filters = {}) => {
+    if (isElectron && window.electronAPI?.getAccountingVouchers) {
+      return window.electronAPI.getAccountingVouchers(filters);
+    }
+    let list = [...(fallbackStorage.vouchers || [])];
+    if (filters.voucher_type && filters.voucher_type !== 'ALL') {
+      list = list.filter(v => v.voucher_type === filters.voucher_type);
+    }
+    if (filters.startDate) {
+      list = list.filter(v => v.date >= filters.startDate);
+    }
+    if (filters.endDate) {
+      list = list.filter(v => v.date <= filters.endDate);
+    }
+    if (filters.party_type && filters.party_type !== 'ALL') {
+      list = list.filter(v => v.party_type === filters.party_type);
+    }
+    if (filters.search && filters.search.trim()) {
+      const q = filters.search.toLowerCase().trim();
+      list = list.filter(v => 
+        v.voucher_no?.toLowerCase().includes(q) ||
+        v.party_name?.toLowerCase().includes(q) ||
+        v.narration?.toLowerCase().includes(q) ||
+        v.reference_no?.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  },
+
+  createAccountingVoucher: async (data) => {
+    if (isElectron && window.electronAPI?.createAccountingVoucher) {
+      return window.electronAPI.createAccountingVoucher(data);
+    }
+    const prefixMap = {
+      PAYMENT: 'PAY',
+      RECEIPT: 'REC',
+      CONTRA: 'CON',
+      JOURNAL: 'JRN'
+    };
+    const prefix = prefixMap[data.voucher_type] || 'VCH';
+    let voucherNo = data.voucher_no;
+    if (!voucherNo) {
+      const count = (fallbackStorage.vouchers || []).filter(v => v.voucher_type === data.voucher_type).length;
+      voucherNo = `${prefix}-${String(count + 1).padStart(4, '0')}`;
+    }
+
+    const newVoucher = {
+      id: Date.now(),
+      voucher_no: voucherNo,
+      voucher_type: data.voucher_type,
+      date: data.date || new Date().toISOString().slice(0, 10),
+      party_type: data.party_type || 'OTHER',
+      party_id: data.party_id || null,
+      party_name: data.party_name,
+      amount: parseFloat(data.amount) || 0,
+      payment_mode: data.payment_mode || 'CASH',
+      reference_no: data.reference_no || '',
+      narration: data.narration || '',
+      created_at: new Date().toISOString()
+    };
+
+    fallbackStorage.vouchers = [newVoucher, ...(fallbackStorage.vouchers || [])];
+
+    // Cross-posting in fallbackStorage:
+    if (data.voucher_type === 'PAYMENT' && data.party_type === 'DISTRIBUTOR' && data.party_id) {
+      const dist = (fallbackStorage.distributors || []).find(d => d.id === Number(data.party_id));
+      if (dist) {
+        dist.pending_balance = Math.max(0, (dist.pending_balance || 0) - newVoucher.amount);
+        fallbackStorage.distributorLedger = [
+          {
+            id: Date.now(),
+            distributor_id: dist.id,
+            type: 'PAYMENT',
+            amount: newVoucher.amount,
+            reference_no: voucherNo,
+            payment_mode: newVoucher.payment_mode,
+            notes: newVoucher.narration || `Voucher ${voucherNo}`,
+            created_at: new Date().toISOString()
+          },
+          ...(fallbackStorage.distributorLedger || [])
+        ];
+      }
+    }
+
+    if (data.voucher_type === 'RECEIPT' && data.party_type === 'CUSTOMER' && data.party_id) {
+      const cust = (fallbackStorage.customers || []).find(c => c.id === Number(data.party_id));
+      if (cust) {
+        cust.balance = Math.max(0, (cust.balance || 0) - newVoucher.amount);
+        if (!cust.ledger) cust.ledger = [];
+        cust.ledger.unshift({
+          id: Date.now(),
+          type: 'PAYMENT',
+          amount: newVoucher.amount,
+          balance: cust.balance,
+          note: newVoucher.narration || `Voucher ${voucherNo} (${newVoucher.payment_mode})`,
+          date: new Date().toISOString()
+        });
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_vouchers', JSON.stringify(fallbackStorage.vouchers));
+        localStorage.setItem('gaavpharma_distributors', JSON.stringify(fallbackStorage.distributors));
+        localStorage.setItem('gaavpharma_distributor_ledger', JSON.stringify(fallbackStorage.distributorLedger));
+        localStorage.setItem('gaavpharma_customers', JSON.stringify(fallbackStorage.customers));
+      } catch (e) {}
+    }
+
+    return newVoucher;
+  },
+
+  deleteAccountingVoucher: async (id) => {
+    if (isElectron && window.electronAPI?.deleteAccountingVoucher) {
+      return window.electronAPI.deleteAccountingVoucher(id);
+    }
+    fallbackStorage.vouchers = (fallbackStorage.vouchers || []).filter(v => v.id !== Number(id));
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_vouchers', JSON.stringify(fallbackStorage.vouchers));
+      } catch (e) {}
+    }
+    return { success: true };
+  },
+
   // Clear All Records / Reset Ledger
   clearAllRecords: async () => {
     if (isElectron) return window.electronAPI.clearAllRecords();
@@ -2033,6 +2202,7 @@ export const api = {
     fallbackStorage.debitNotes = [];
     fallbackStorage.distributorLedger = [];
     fallbackStorage.shortageDiary = [];
+    fallbackStorage.vouchers = [];
     fallbackStorage.distributors.forEach(d => { d.pending_balance = 0; });
 
     if (typeof window !== 'undefined') {
@@ -2043,6 +2213,7 @@ export const api = {
         localStorage.setItem('gaavpharma_debit_notes', JSON.stringify([]));
         localStorage.setItem('gaavpharma_distributor_ledger', JSON.stringify([]));
         localStorage.setItem('gaavpharma_shortage_diary', JSON.stringify([]));
+        localStorage.setItem('gaavpharma_vouchers', JSON.stringify([]));
         localStorage.setItem('gaavpharma_distributors', JSON.stringify(fallbackStorage.distributors));
       } catch (e) {}
     }

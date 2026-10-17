@@ -297,7 +297,24 @@ function createTables() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS accounting_vouchers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      voucher_no TEXT NOT NULL UNIQUE,
+      voucher_type TEXT CHECK(voucher_type IN ('PAYMENT', 'RECEIPT', 'CONTRA', 'JOURNAL')) NOT NULL,
+      date TEXT NOT NULL,
+      party_type TEXT CHECK(party_type IN ('DISTRIBUTOR', 'CUSTOMER', 'EXPENSE', 'BANK', 'OTHER')) NOT NULL,
+      party_id INTEGER,
+      party_name TEXT NOT NULL,
+      amount REAL NOT NULL,
+      payment_mode TEXT CHECK(payment_mode IN ('CASH', 'BANK', 'UPI', 'CHEQUE')) DEFAULT 'CASH',
+      reference_no TEXT,
+      narration TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_backup_logs_created ON backup_logs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_vouchers_date ON accounting_vouchers(date);
+    CREATE INDEX IF NOT EXISTS idx_vouchers_type ON accounting_vouchers(voucher_type);
 
     CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
     CREATE INDEX IF NOT EXISTS idx_products_salt ON products(generic_salt);
@@ -2448,6 +2465,115 @@ function deleteShortageItem(id) {
   return { success: true };
 }
 
+function getAccountingVouchers(filters = {}) {
+  if (!db) initDatabase();
+  let sql = `SELECT * FROM accounting_vouchers WHERE 1=1`;
+  const params = [];
+  if (filters.voucher_type && filters.voucher_type !== 'ALL') {
+    sql += ` AND voucher_type = ?`;
+    params.push(filters.voucher_type);
+  }
+  if (filters.startDate) {
+    sql += ` AND date(date) >= date(?)`;
+    params.push(filters.startDate);
+  }
+  if (filters.endDate) {
+    sql += ` AND date(date) <= date(?)`;
+    params.push(filters.endDate);
+  }
+  if (filters.party_type && filters.party_type !== 'ALL') {
+    sql += ` AND party_type = ?`;
+    params.push(filters.party_type);
+  }
+  if (filters.search && filters.search.trim()) {
+    const q = `%${filters.search.trim()}%`;
+    sql += ` AND (voucher_no LIKE ? OR party_name LIKE ? OR narration LIKE ? OR reference_no LIKE ?)`;
+    params.push(q, q, q, q);
+  }
+  sql += ` ORDER BY id DESC`;
+  if (filters.limit) {
+    sql += ` LIMIT ?`;
+    params.push(parseInt(filters.limit, 10));
+  }
+  return db.prepare(sql).all(...params);
+}
+
+function createAccountingVoucher(data) {
+  if (!db) initDatabase();
+  const tx = db.transaction(() => {
+    const prefixMap = {
+      PAYMENT: 'PAY',
+      RECEIPT: 'REC',
+      CONTRA: 'CON',
+      JOURNAL: 'JRN'
+    };
+    const prefix = prefixMap[data.voucher_type] || 'VCH';
+    
+    let voucherNo = data.voucher_no;
+    if (!voucherNo) {
+      const countRow = db.prepare(`SELECT COUNT(id) as cnt FROM accounting_vouchers WHERE voucher_type = ?`).get(data.voucher_type);
+      const nextNum = (countRow ? countRow.cnt : 0) + 1;
+      voucherNo = `${prefix}-${String(nextNum).padStart(4, '0')}`;
+    }
+
+    const dateStr = data.date || new Date().toISOString().slice(0, 10);
+    const amount = parseFloat(data.amount) || 0;
+    const paymentMode = data.payment_mode || 'CASH';
+
+    const stmt = db.prepare(`
+      INSERT INTO accounting_vouchers (
+        voucher_no, voucher_type, date, party_type, party_id, party_name, amount, payment_mode, reference_no, narration
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const res = stmt.run(
+      voucherNo,
+      data.voucher_type,
+      dateStr,
+      data.party_type || 'OTHER',
+      data.party_id || null,
+      data.party_name,
+      amount,
+      paymentMode,
+      data.reference_no || '',
+      data.narration || ''
+    );
+    const voucherId = res.lastInsertRowid;
+
+    // Cross-posting:
+    // A) Payment to Distributor -> update distributor pending balance & ledger
+    if (data.voucher_type === 'PAYMENT' && data.party_type === 'DISTRIBUTOR' && data.party_id) {
+      addDistributorPayment(
+        data.party_id,
+        amount,
+        paymentMode === 'CASH' ? 'CASH' : paymentMode === 'UPI' ? 'UPI' : 'CHEQUE',
+        voucherNo,
+        data.narration || `Voucher ${voucherNo}`
+      );
+    }
+
+    // B) Receipt from Khata Customer -> update khata balance & ledger
+    if (data.voucher_type === 'RECEIPT' && data.party_type === 'CUSTOMER' && data.party_id) {
+      addKhataPayment(
+        data.party_id,
+        amount,
+        data.narration || `Voucher ${voucherNo} (${paymentMode})`
+      );
+    }
+
+    return db.prepare(`SELECT * FROM accounting_vouchers WHERE id = ?`).get(voucherId);
+  });
+
+  return tx();
+}
+
+function deleteAccountingVoucher(id) {
+  if (!db) initDatabase();
+  const vch = db.prepare(`SELECT * FROM accounting_vouchers WHERE id = ?`).get(id);
+  if (!vch) return { success: false };
+  db.prepare(`DELETE FROM accounting_vouchers WHERE id = ?`).run(id);
+  return { success: true };
+}
+
 function clearAllRecords() {
   if (!db) initDatabase();
   db.prepare(`DELETE FROM invoice_items`).run();
@@ -2460,6 +2586,7 @@ function clearAllRecords() {
   db.prepare(`DELETE FROM purchases`).run();
   db.prepare(`DELETE FROM distributor_ledger`).run();
   db.prepare(`DELETE FROM shortage_diary`).run();
+  db.prepare(`DELETE FROM accounting_vouchers`).run();
   db.prepare(`UPDATE distributors SET pending_balance = 0`).run();
   return { success: true };
 }
@@ -2843,6 +2970,9 @@ module.exports = {
   updateShortageItem,
   markShortageAsOrdered,
   deleteShortageItem,
+  getAccountingVouchers,
+  createAccountingVoucher,
+  deleteAccountingVoucher,
   clearAllRecords,
   getAvailableBackupDrives,
   pruneOldBackups,

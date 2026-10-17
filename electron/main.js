@@ -138,6 +138,11 @@ function setupIpcHandlers() {
   ipcMain.handle('db:markShortageAsOrdered', (_, ids, distributorId) => db.markShortageAsOrdered(ids, distributorId));
   ipcMain.handle('db:deleteShortageItem', (_, id) => db.deleteShortageItem(id));
 
+  // Accounting Vouchers & Cash/Bank Book (MediVision Parity)
+  ipcMain.handle('db:getAccountingVouchers', (_, filters) => db.getAccountingVouchers(filters));
+  ipcMain.handle('db:createAccountingVoucher', (_, data) => db.createAccountingVoucher(data));
+  ipcMain.handle('db:deleteAccountingVoucher', (_, id) => db.deleteAccountingVoucher(id));
+
   // Backup & Disaster Recovery Engine
   ipcMain.handle('db:getAvailableBackupDrives', () => db.getAvailableBackupDrives());
   ipcMain.handle('db:createDatabaseBackup', (_, options) => db.createDatabaseBackup(options));

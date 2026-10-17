@@ -77,6 +77,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   markShortageAsOrdered: (ids, distributorId) => ipcRenderer.invoke('db:markShortageAsOrdered', ids, distributorId),
   deleteShortageItem: (id) => ipcRenderer.invoke('db:deleteShortageItem', id),
 
+  // Accounting Vouchers & Cash/Bank Book (MediVision Parity)
+  getAccountingVouchers: (filters) => ipcRenderer.invoke('db:getAccountingVouchers', filters),
+  createAccountingVoucher: (data) => ipcRenderer.invoke('db:createAccountingVoucher', data),
+  deleteAccountingVoucher: (id) => ipcRenderer.invoke('db:deleteAccountingVoucher', id),
+
   // Backup & Disaster Recovery Engine
   getAvailableBackupDrives: () => ipcRenderer.invoke('db:getAvailableBackupDrives'),
   createDatabaseBackup: (options) => ipcRenderer.invoke('db:createDatabaseBackup', options),

@@ -650,6 +650,83 @@ async function runTestSuite() {
     fs.rmSync(tempBackupDir, { recursive: true, force: true });
   } catch (e) {}
 
+  // --------------------------------------------------------------------
+  // TEST GROUP 14: MediVision Accounting Vouchers & Cash/Bank Book Engine
+  // --------------------------------------------------------------------
+  console.log('\n📖 [TEST GROUP 14] MediVision Accounting Vouchers & Cash/Bank Book Engine');
+
+  // 14.1 Payment Voucher for Expense (F5)
+  const expenseVoucher = await api.createAccountingVoucher({
+    voucher_type: 'PAYMENT',
+    party_type: 'EXPENSE',
+    party_name: 'Shop Electricity Bill (MSEDCL)',
+    amount: 1250,
+    payment_mode: 'CASH',
+    reference_no: 'MSEDCL-OCT-44',
+    narration: 'Paid shop light bill via drawer cash'
+  });
+  assert(expenseVoucher && expenseVoucher.voucher_no.startsWith('PAY-'), 'Expense Payment voucher created with PAY- prefix');
+  assert(expenseVoucher.amount === 1250, 'Expense Payment voucher records correct amount ₹1250');
+
+  // 14.2 Payment Voucher for Distributor with Automatic Cross-Posting
+  const testDist = await api.addDistributor({
+    name: 'Nashik Pharma Distributors',
+    phone: '9822000000',
+    pending_balance: 5000
+  });
+  const distVoucher = await api.createAccountingVoucher({
+    voucher_type: 'PAYMENT',
+    party_type: 'DISTRIBUTOR',
+    party_id: testDist.id,
+    party_name: testDist.name,
+    amount: 2000,
+    payment_mode: 'UPI',
+    reference_no: 'UPI-99120',
+    narration: 'Part settlement for medicine purchase'
+  });
+  assert(distVoucher && distVoucher.amount === 2000, 'Distributor Payment voucher created successfully');
+
+  // Check distributor ledger updated automatically
+  const distLedger = await api.getDistributorLedger(testDist.id);
+  assert(distLedger && distLedger.entries.some(e => e.reference_no === distVoucher.voucher_no && e.amount === 2000), 'Distributor sub-ledger automatically cross-posted from voucher');
+  assert(distLedger.distributor.pending_balance === 3000, 'Distributor pending balance automatically reduced by voucher (5000 - 2000 = 3000)');
+
+  // 14.3 Receipt Voucher for Khata Customer (F6)
+  const testCust = await api.addKhataCustomer('Kisanrao Deshmukh', '9422000000');
+  // simulate previous debit
+  testCust.balance = 1500;
+  const receiptVoucher = await api.createAccountingVoucher({
+    voucher_type: 'RECEIPT',
+    party_type: 'CUSTOMER',
+    party_id: testCust.id,
+    party_name: testCust.name,
+    amount: 500,
+    payment_mode: 'CASH',
+    reference_no: 'REC-CASH',
+    narration: 'Family khata payment received at counter'
+  });
+  assert(receiptVoucher && receiptVoucher.voucher_no.startsWith('REC-'), 'Receipt voucher created with REC- prefix');
+  const custLedger = await api.getKhataCustomerLedger(testCust.id);
+  assert(custLedger && custLedger.customer.balance === 1000, 'Khata customer balance automatically deducted by receipt voucher (1500 - 500 = 1000)');
+
+  // 14.4 Contra Voucher (F4 - Bank Transfer / Deposit)
+  const contraVoucher = await api.createAccountingVoucher({
+    voucher_type: 'CONTRA',
+    party_type: 'BANK',
+    party_name: 'State Bank of India (Current A/c)',
+    amount: 10000,
+    payment_mode: 'CASH',
+    reference_no: 'DEP-SLIP-41',
+    narration: 'Surplus cash deposited into SBI Current Account'
+  });
+  assert(contraVoucher && contraVoucher.voucher_no.startsWith('CON-'), 'Contra voucher created with CON- prefix');
+
+  // 14.5 Voucher Filtering
+  const allVouchers = await api.getAccountingVouchers();
+  assert(allVouchers.length >= 4, 'getAccountingVouchers returns all created vouchers');
+  const paymentVouchers = await api.getAccountingVouchers({ voucher_type: 'PAYMENT' });
+  assert(paymentVouchers.every(v => v.voucher_type === 'PAYMENT'), 'getAccountingVouchers correctly filters by PAYMENT type');
+
   // 12.1 Verify complete data wipe with clearAllRecords
   console.log('\n🧹 [DATABASE INTEGRITY] Full Database Reset');
   await api.clearAllRecords();
@@ -657,11 +734,13 @@ async function runTestSuite() {
   const purchasesAfterClear = await api.getPurchases();
   const h1AfterClear = await api.getScheduleH1Register();
   const shortageAfterClear = await api.getShortageDiary({ status: 'ALL' });
+  const vouchersAfterClear = await api.getAccountingVouchers();
 
   assert(debitNotesAfterClear.length === 0, 'clearAllRecords wipes all debit notes from storage');
   assert(purchasesAfterClear.length === 0, 'clearAllRecords wipes all wholesale purchases from storage');
   assert(h1AfterClear.length === 0, 'clearAllRecords resets Schedule H1 register entries to zero');
   assert(shortageAfterClear.length === 0, 'clearAllRecords wipes all shortage diary entries from storage');
+  assert(vouchersAfterClear.length === 0, 'clearAllRecords wipes all accounting vouchers from storage');
 
   console.log('\n========================================================');
   console.log(`🏁 TEST RESULTS: ${passed} PASSED | ${failed} FAILED`);
