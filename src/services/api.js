@@ -883,13 +883,21 @@ export const api = {
   createInvoice: async (invoiceData, items) => {
     if (isElectron) return window.electronAPI.createInvoice(invoiceData, items);
     const invoiceNo = `INV-20261016-${String(fallbackStorage.invoices.length + 1).padStart(3, '0')}`;
+    const enrichedItems = items.map(it => {
+      const prod = fallbackStorage.products.find(p => p.id === it.product_id || p.id === it.id || p.name === it.product_name || p.name === it.name);
+      return {
+        ...it,
+        is_schedule_h1: it.is_schedule_h1 !== undefined ? it.is_schedule_h1 : (prod?.is_schedule_h1 ? 1 : 0),
+        gst_rate: it.gst_rate !== undefined ? it.gst_rate : (prod?.gst_rate || 12)
+      };
+    });
     const newInv = {
       id: Date.now(),
       invoice_no: invoiceNo,
       ...invoiceData,
       created_at: new Date().toISOString(),
-      item_count: items.length,
-      items
+      item_count: enrichedItems.length,
+      items: enrichedItems
     };
     fallbackStorage.invoices.unshift(newInv);
 
@@ -1408,6 +1416,334 @@ export const api = {
     }
 
     return newNote;
+  },
+
+  // Compliance & Statutory Registers (FDA & GST)
+  getScheduleH1Register: async (filters = {}) => {
+    if (isElectron) return window.electronAPI.getScheduleH1Register(filters);
+
+    let rows = [];
+    fallbackStorage.invoices.forEach(inv => {
+      const invDate = (inv.created_at || '').slice(0, 10);
+      if (filters.startDate && invDate < filters.startDate) return;
+      if (filters.endDate && invDate > filters.endDate) return;
+
+      (inv.items || []).forEach(it => {
+        const prod = fallbackStorage.products.find(p => p.id === it.product_id || p.id === it.id || p.name === it.product_name || p.name === it.name);
+        const isH1 = it.is_schedule_h1 === 1 || it.is_schedule_h1 === true || (prod && (prod.is_schedule_h1 === 1 || prod.is_schedule_h1 === true));
+        if (!isH1) return;
+
+        const row = {
+          item_id: it.id || Math.random(),
+          invoice_id: inv.id,
+          invoice_no: inv.invoice_no,
+          dispensed_at: inv.created_at,
+          patient_name: inv.customer_name || 'Cash Customer',
+          patient_mobile: inv.customer_mobile || '-',
+          patient_address: inv.customer_address || 'Ghoti',
+          doctor_name: inv.doctor_name || 'Prescribing Physician',
+          doctor_reg_no: inv.doctor_reg_no || 'MMC-REG-PENDING',
+          product_id: it.product_id || it.id,
+          medicine_name: it.product_name || it.name || (prod ? prod.name : 'Medicine'),
+          generic_salt: it.generic_salt || (prod ? prod.generic_salt : '-'),
+          strip_size: it.strip_size || (prod ? prod.strip_size : 10),
+          batch_no: it.batch_no || 'NA',
+          expiry_date: it.expiry_date || 'NA',
+          is_loose_tablet: it.is_loose_tablet ? 1 : 0,
+          qty: it.qty,
+          unit_price: it.unit_price,
+          total_price: it.total_price
+        };
+
+        if (filters.search && filters.search.trim()) {
+          const s = filters.search.trim().toLowerCase();
+          const match = (row.medicine_name || '').toLowerCase().includes(s) ||
+                        (row.generic_salt || '').toLowerCase().includes(s) ||
+                        (row.doctor_name || '').toLowerCase().includes(s) ||
+                        (row.doctor_reg_no || '').toLowerCase().includes(s) ||
+                        (row.patient_name || '').toLowerCase().includes(s) ||
+                        (row.patient_address || '').toLowerCase().includes(s) ||
+                        (row.batch_no || '').toLowerCase().includes(s) ||
+                        (row.invoice_no || '').toLowerCase().includes(s);
+          if (!match) return;
+        }
+
+        rows.push(row);
+      });
+    });
+
+    rows.sort((a, b) => new Date(b.dispensed_at) - new Date(a.dispensed_at));
+    return rows;
+  },
+
+  getGstTaxSummary: async (period = {}) => {
+    if (isElectron) return window.electronAPI.getGstTaxSummary(period);
+
+    const now = new Date();
+    const year = period.year ? parseInt(period.year) : now.getFullYear();
+    const month = period.month ? parseInt(period.month) : (now.getMonth() + 1);
+
+    let startDate = period.startDate;
+    let endDate = period.endDate;
+    if (!startDate || !endDate) {
+      const padMonth = String(month).padStart(2, '0');
+      startDate = `${year}-${padMonth}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      endDate = `${year}-${padMonth}-${String(lastDay).padStart(2, '0')}`;
+    }
+
+    // 1. Outward Supplies (Sales)
+    const outwardSlabs = {
+      0: { slab: 0, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+      5: { slab: 5, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+      12: { slab: 12, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+      18: { slab: 18, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 }
+    };
+
+    let totalOutwardGross = 0;
+    let totalOutwardTaxable = 0;
+    let totalOutputCgst = 0;
+    let totalOutputSgst = 0;
+    let filteredInvoicesCount = 0;
+
+    fallbackStorage.invoices.forEach(inv => {
+      const invDate = (inv.created_at || '').slice(0, 10);
+      if (invDate < startDate || invDate > endDate) return;
+      filteredInvoicesCount++;
+
+      (inv.items || []).forEach(it => {
+        const rate = Number(it.gst_rate) || 12;
+        if (!outwardSlabs[rate]) {
+          outwardSlabs[rate] = { slab: rate, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 };
+        }
+        const gross = Number(it.total_price) || 0;
+        const taxable = rate === 0 ? gross : gross / (1 + (rate / 100));
+        const tax = gross - taxable;
+        const halfTax = tax / 2;
+
+        outwardSlabs[rate].gross += gross;
+        outwardSlabs[rate].taxable += taxable;
+        outwardSlabs[rate].cgst += halfTax;
+        outwardSlabs[rate].sgst += halfTax;
+        outwardSlabs[rate].total_tax += tax;
+
+        totalOutwardGross += gross;
+        totalOutwardTaxable += taxable;
+        totalOutputCgst += halfTax;
+        totalOutputSgst += halfTax;
+      });
+    });
+
+    // 2. Inward Supplies (Purchases / ITC)
+    const inwardSlabs = {
+      0: { slab: 0, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+      5: { slab: 5, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+      12: { slab: 12, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+      18: { slab: 18, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 }
+    };
+
+    let totalInwardGross = 0;
+    let totalInwardTaxable = 0;
+    let totalInwardCgstItc = 0;
+    let totalInwardSgstItc = 0;
+    let inwardItemsCount = 0;
+
+    fallbackStorage.purchases.forEach(p => {
+      const pDate = (p.invoice_date || '').slice(0, 10);
+      if (pDate < startDate || pDate > endDate) return;
+
+      (p.items || []).forEach(it => {
+        inwardItemsCount++;
+        const rate = Number(it.gst_rate) || 12;
+        if (!inwardSlabs[rate]) {
+          inwardSlabs[rate] = { slab: rate, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 };
+        }
+        const disc = Number(it.discount_percent) || 0;
+        const base = (Number(it.purchase_rate) || 0) * (Number(it.qty) || 0);
+        const taxable = base * (1 - disc / 100);
+        const tax = taxable * (rate / 100);
+        const halfTax = tax / 2;
+        const gross = taxable + tax;
+
+        inwardSlabs[rate].gross += gross;
+        inwardSlabs[rate].taxable += taxable;
+        inwardSlabs[rate].cgst += halfTax;
+        inwardSlabs[rate].sgst += halfTax;
+        inwardSlabs[rate].total_tax += tax;
+
+        totalInwardGross += gross;
+        totalInwardTaxable += taxable;
+        totalInwardCgstItc += halfTax;
+        totalInwardSgstItc += halfTax;
+      });
+    });
+
+    // 3. ITC Reversals (Debit Notes)
+    const reversalSlabs = {
+      0: { slab: 0, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+      5: { slab: 5, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+      12: { slab: 12, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+      18: { slab: 18, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 }
+    };
+
+    let totalReversedTaxable = 0;
+    let totalReversedCgst = 0;
+    let totalReversedSgst = 0;
+    let totalReversedGross = 0;
+    let debitItemsCount = 0;
+
+    fallbackStorage.debitNotes.forEach(dn => {
+      const dnDate = (dn.note_date || '').slice(0, 10);
+      if (dnDate < startDate || dnDate > endDate) return;
+
+      (dn.items || []).forEach(it => {
+        debitItemsCount++;
+        const rate = Number(it.gst_rate) || 12;
+        if (!reversalSlabs[rate]) {
+          reversalSlabs[rate] = { slab: rate, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 };
+        }
+        const taxable = Number(it.taxable_value) || 0;
+        const cgst = Number(it.cgst_amount) || 0;
+        const sgst = Number(it.sgst_amount) || 0;
+        const totalTax = cgst + sgst;
+        const gross = Number(it.total_claim) || (taxable + totalTax);
+
+        reversalSlabs[rate].gross += gross;
+        reversalSlabs[rate].taxable += taxable;
+        reversalSlabs[rate].cgst += cgst;
+        reversalSlabs[rate].sgst += sgst;
+        reversalSlabs[rate].total_tax += totalTax;
+
+        totalReversedGross += gross;
+        totalReversedTaxable += taxable;
+        totalReversedCgst += cgst;
+        totalReversedSgst += sgst;
+      });
+    });
+
+    // 4. Net Reconciliation
+    const totalEligibleItc = totalInwardCgstItc + totalInwardSgstItc;
+    const totalReversedItc = totalReversedCgst + totalReversedSgst;
+    const netCgstItc = Math.max(0, totalInwardCgstItc - totalReversedCgst);
+    const netSgstItc = Math.max(0, totalInwardSgstItc - totalReversedSgst);
+    const netEligibleItc = netCgstItc + netSgstItc;
+
+    const totalOutputTax = totalOutputCgst + totalOutputSgst;
+    const netCgstPayable = Math.max(0, totalOutputCgst - netCgstItc);
+    const netSgstPayable = Math.max(0, totalOutputSgst - netSgstItc);
+    const netGstPayable = netCgstPayable + netSgstPayable;
+
+    const itcCreditCarriedForward = Math.max(0, netEligibleItc - totalOutputTax);
+
+    // 5. "40 GST" - Aggregate Turnover Threshold Tracker (Sec 22 CGST Act)
+    const curDate = new Date(startDate);
+    const curMonth = curDate.getMonth();
+    const curYear = curDate.getFullYear();
+    const fyStartYear = curMonth >= 3 ? curYear : curYear - 1;
+    const fyEndYear = fyStartYear + 1;
+    const fyStartDate = `${fyStartYear}-04-01`;
+    const fyEndDate = `${fyEndYear}-03-31`;
+
+    let fyTotalTurnover = 0;
+    let fyInvoiceCount = 0;
+    fallbackStorage.invoices.forEach(inv => {
+      const invDate = (inv.created_at || '').slice(0, 10);
+      if (invDate >= fyStartDate && invDate <= fyEndDate) {
+        fyTotalTurnover += (Number(inv.final_amount) || 0);
+        fyInvoiceCount++;
+      }
+    });
+
+    const turnoverLimit = 4000000; // ₹40 Lakhs
+    const turnoverPercentage = Math.min(100, (fyTotalTurnover / turnoverLimit) * 100);
+    const remainingAllowance = Math.max(0, turnoverLimit - fyTotalTurnover);
+
+    let turnoverStatus = 'SAFE';
+    if (fyTotalTurnover >= turnoverLimit) {
+      turnoverStatus = 'EXCEEDED';
+    } else if (fyTotalTurnover >= 3000000) {
+      turnoverStatus = 'WARNING';
+    }
+
+    const roundedOutwardCgst = Number(totalOutputCgst.toFixed(2));
+    const roundedOutwardSgst = Number(totalOutputSgst.toFixed(2));
+    const roundedOutwardTotalTax = Number((roundedOutwardCgst + roundedOutwardSgst).toFixed(2));
+
+    const roundedInwardCgst = Number(totalInwardCgstItc.toFixed(2));
+    const roundedInwardSgst = Number(totalInwardSgstItc.toFixed(2));
+    const roundedInwardTotalItc = Number((roundedInwardCgst + roundedInwardSgst).toFixed(2));
+
+    const roundedRevCgst = Number(totalReversedCgst.toFixed(2));
+    const roundedRevSgst = Number(totalReversedSgst.toFixed(2));
+    const roundedRevTotal = Number((roundedRevCgst + roundedRevSgst).toFixed(2));
+
+    const roundedNetCgstItc = Math.max(0, Number((roundedInwardCgst - roundedRevCgst).toFixed(2)));
+    const roundedNetSgstItc = Math.max(0, Number((roundedInwardSgst - roundedRevSgst).toFixed(2)));
+    const roundedNetEligibleItc = Number((roundedNetCgstItc + roundedNetSgstItc).toFixed(2));
+
+    const roundedNetCgstPayable = Math.max(0, Number((roundedOutwardCgst - roundedNetCgstItc).toFixed(2)));
+    const roundedNetSgstPayable = Math.max(0, Number((roundedOutwardSgst - roundedNetSgstItc).toFixed(2)));
+    const roundedNetGstPayable = Number((roundedNetCgstPayable + roundedNetSgstPayable).toFixed(2));
+
+    const roundedItcCreditCarriedForward = Math.max(0, Number((roundedNetEligibleItc - roundedOutwardTotalTax).toFixed(2)));
+
+    return {
+      period: {
+        startDate,
+        endDate,
+        year,
+        month,
+        fyLabel: `FY ${fyStartYear}-${String(fyEndYear).slice(2)}`
+      },
+      outward: {
+        grossSales: Number(totalOutwardGross.toFixed(2)),
+        taxableValue: Number(totalOutwardTaxable.toFixed(2)),
+        cgst: roundedOutwardCgst,
+        sgst: roundedOutwardSgst,
+        totalTax: roundedOutwardTotalTax,
+        slabs: outwardSlabs,
+        invoiceCount: filteredInvoicesCount
+      },
+      inward: {
+        grossPurchases: Number(totalInwardGross.toFixed(2)),
+        taxableValue: Number(totalInwardTaxable.toFixed(2)),
+        cgstItc: roundedInwardCgst,
+        sgstItc: roundedInwardSgst,
+        totalItc: roundedInwardTotalItc,
+        slabs: inwardSlabs,
+        itemCount: inwardItemsCount
+      },
+      itcReversals: {
+        grossClaim: Number(totalReversedGross.toFixed(2)),
+        taxableValue: Number(totalReversedTaxable.toFixed(2)),
+        reversedCgst: roundedRevCgst,
+        reversedSgst: roundedRevSgst,
+        totalReversedItc: roundedRevTotal,
+        slabs: reversalSlabs,
+        itemCount: debitItemsCount
+      },
+      netPosition: {
+        totalOutputTax: roundedOutwardTotalTax,
+        totalEligibleItc: roundedInwardTotalItc,
+        totalReversedItc: roundedRevTotal,
+        netEligibleItc: roundedNetEligibleItc,
+        netCgstPayable: roundedNetCgstPayable,
+        netSgstPayable: roundedNetSgstPayable,
+        netGstPayable: roundedNetGstPayable,
+        itcCreditCarriedForward: roundedItcCreditCarriedForward
+      },
+      turnoverTracker: {
+        limit: turnoverLimit,
+        annualTurnover: Number(fyTotalTurnover.toFixed(2)),
+        remainingAllowance: Number(remainingAllowance.toFixed(2)),
+        turnoverPercentage: Number(turnoverPercentage.toFixed(2)),
+        status: turnoverStatus,
+        fyLabel: `FY ${fyStartYear}-${String(fyEndYear).slice(2)}`,
+        fyStartDate,
+        fyEndDate,
+        invoiceCount: fyInvoiceCount
+      }
+    };
   },
 
   // Clear All Records / Reset Ledger

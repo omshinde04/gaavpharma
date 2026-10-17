@@ -65,6 +65,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDebitNoteDetails: (noteId) => ipcRenderer.invoke('db:getDebitNoteDetails', noteId),
   createDebitNote: (noteData, items) => ipcRenderer.invoke('db:createDebitNote', noteData, items),
 
+  // Compliance & Statutory Registers (FDA & GST)
+  getScheduleH1Register: (filters) => ipcRenderer.invoke('db:getScheduleH1Register', filters),
+  getGstTaxSummary: (period) => ipcRenderer.invoke('db:getGstTaxSummary', period),
+
   // System Utilities
   openExternalUrl: (url) => ipcRenderer.invoke('sys:openExternalUrl', url),
   printReceipt: () => ipcRenderer.invoke('sys:printReceipt')

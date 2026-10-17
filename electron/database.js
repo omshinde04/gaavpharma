@@ -96,7 +96,9 @@ function createTables() {
       invoice_no TEXT UNIQUE NOT NULL,
       customer_name TEXT DEFAULT 'Cash Customer',
       customer_mobile TEXT,
+      customer_address TEXT,
       doctor_name TEXT,
+      doctor_reg_no TEXT,
       payment_mode TEXT CHECK(payment_mode IN ('cash', 'upi', 'khata', 'card')) DEFAULT 'cash',
       total_amount REAL NOT NULL,
       discount REAL DEFAULT 0,
@@ -112,7 +114,8 @@ function createTables() {
       is_loose_tablet BOOLEAN DEFAULT 0,
       qty INTEGER NOT NULL,
       unit_price REAL NOT NULL,
-      total_price REAL NOT NULL
+      total_price REAL NOT NULL,
+      gst_rate REAL DEFAULT 12
     );
 
     CREATE TABLE IF NOT EXISTS distributors (
@@ -276,6 +279,34 @@ function createTables() {
       db.prepare(`INSERT INTO users (username, display_name, pin_code, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?, ?)`).run(
         'Divya_kale', 'Divya kale', '1111', 'owner123', 'store_admin', 1
       );
+    }
+  } catch (e) {}
+
+  // Auto-migrate schema updates for FDA H1 & GST columns
+  try {
+    const invCols = db.prepare("PRAGMA table_info(invoices)").all();
+    if (!invCols.some(c => c.name === 'customer_address')) {
+      db.exec("ALTER TABLE invoices ADD COLUMN customer_address TEXT;");
+    }
+    if (!invCols.some(c => c.name === 'doctor_reg_no')) {
+      db.exec("ALTER TABLE invoices ADD COLUMN doctor_reg_no TEXT;");
+    }
+  } catch (e) {}
+
+  try {
+    const prodCols = db.prepare("PRAGMA table_info(products)").all();
+    if (!prodCols.some(c => c.name === 'gst_rate')) {
+      db.exec("ALTER TABLE products ADD COLUMN gst_rate REAL DEFAULT 12;");
+    }
+    if (!prodCols.some(c => c.name === 'hsn_code')) {
+      db.exec("ALTER TABLE products ADD COLUMN hsn_code TEXT DEFAULT '3004';");
+    }
+  } catch (e) {}
+
+  try {
+    const itemCols = db.prepare("PRAGMA table_info(invoice_items)").all();
+    if (!itemCols.some(c => c.name === 'gst_rate')) {
+      db.exec("ALTER TABLE invoice_items ADD COLUMN gst_rate REAL DEFAULT 12;");
     }
   } catch (e) {}
 }
@@ -1194,15 +1225,17 @@ function createInvoice(invoiceData, items) {
 
   const tx = db.transaction(() => {
     const insertInv = db.prepare(`
-      INSERT INTO invoices (invoice_no, customer_name, customer_mobile, doctor_name, payment_mode, total_amount, discount, final_amount)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO invoices (invoice_no, customer_name, customer_mobile, customer_address, doctor_name, doctor_reg_no, payment_mode, total_amount, discount, final_amount)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const invRes = insertInv.run(
       invoiceNo,
       invoiceData.customer_name || 'Cash Customer',
       invoiceData.customer_mobile || null,
+      invoiceData.customer_address || null,
       invoiceData.doctor_name || null,
+      invoiceData.doctor_reg_no || null,
       invoiceData.payment_mode || 'cash',
       invoiceData.total_amount,
       invoiceData.discount || 0,
@@ -1212,8 +1245,8 @@ function createInvoice(invoiceData, items) {
     const invoiceId = invRes.lastInsertRowid;
 
     const insertItem = db.prepare(`
-      INSERT INTO invoice_items (invoice_id, product_id, batch_id, is_loose_tablet, qty, unit_price, total_price)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO invoice_items (invoice_id, product_id, batch_id, is_loose_tablet, qty, unit_price, total_price, gst_rate)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const decrementStock = db.prepare(`
@@ -1223,12 +1256,13 @@ function createInvoice(invoiceData, items) {
     for (const item of items) {
       insertItem.run(
         invoiceId,
-        item.product_id,
+        item.product_id || item.id,
         item.batch_id || null,
         item.is_loose_tablet ? 1 : 0,
         item.qty,
         item.unit_price,
-        item.total_price
+        item.total_price,
+        item.gst_rate !== undefined ? item.gst_rate : 12
       );
 
       if (item.batch_id) {
@@ -1288,7 +1322,7 @@ function getInvoiceDetails(invoiceId) {
   if (!invoice) return null;
 
   const items = db.prepare(`
-    SELECT ii.*, p.name as product_name, p.generic_salt, p.strip_size, b.batch_no, b.expiry_date
+    SELECT ii.*, p.name as product_name, p.generic_salt, p.strip_size, p.is_schedule_h1, b.batch_no, b.expiry_date
     FROM invoice_items ii
     JOIN products p ON ii.product_id = p.id
     LEFT JOIN batches b ON ii.batch_id = b.id
@@ -1768,6 +1802,353 @@ function createDebitNote(noteData, items) {
   return tx();
 }
 
+function getScheduleH1Register(filters = {}) {
+  if (!db) initDatabase();
+  let sql = `
+    SELECT 
+      ii.id as item_id,
+      i.id as invoice_id,
+      i.invoice_no,
+      i.created_at as dispensed_at,
+      i.customer_name as patient_name,
+      i.customer_mobile as patient_mobile,
+      COALESCE(i.customer_address, 'Ghoti') as patient_address,
+      COALESCE(i.doctor_name, 'Prescribing Physician') as doctor_name,
+      COALESCE(i.doctor_reg_no, 'MMC-REG-PENDING') as doctor_reg_no,
+      p.id as product_id,
+      p.name as medicine_name,
+      p.generic_salt,
+      p.strip_size,
+      COALESCE(b.batch_no, 'NA') as batch_no,
+      COALESCE(b.expiry_date, 'NA') as expiry_date,
+      ii.is_loose_tablet,
+      ii.qty,
+      ii.unit_price,
+      ii.total_price
+    FROM invoice_items ii
+    JOIN invoices i ON ii.invoice_id = i.id
+    JOIN products p ON ii.product_id = p.id
+    LEFT JOIN batches b ON ii.batch_id = b.id
+    WHERE p.is_schedule_h1 = 1
+  `;
+  const params = [];
+
+  if (filters.startDate) {
+    sql += ` AND date(i.created_at) >= date(?)`;
+    params.push(filters.startDate);
+  }
+  if (filters.endDate) {
+    sql += ` AND date(i.created_at) <= date(?)`;
+    params.push(filters.endDate);
+  }
+  if (filters.search && filters.search.trim()) {
+    const term = `%${filters.search.trim()}%`;
+    sql += ` AND (
+      p.name LIKE ? OR 
+      p.generic_salt LIKE ? OR 
+      i.doctor_name LIKE ? OR 
+      i.doctor_reg_no LIKE ? OR 
+      i.customer_name LIKE ? OR 
+      i.customer_address LIKE ? OR 
+      b.batch_no LIKE ? OR 
+      i.invoice_no LIKE ?
+    )`;
+    params.push(term, term, term, term, term, term, term, term);
+  }
+
+  sql += ` ORDER BY i.created_at DESC`;
+
+  return db.prepare(sql).all(...params);
+}
+
+function getGstTaxSummary(period = {}) {
+  if (!db) initDatabase();
+
+  const now = new Date();
+  const year = period.year ? parseInt(period.year) : now.getFullYear();
+  const month = period.month ? parseInt(period.month) : (now.getMonth() + 1);
+
+  let startDate = period.startDate;
+  let endDate = period.endDate;
+  if (!startDate || !endDate) {
+    const padMonth = String(month).padStart(2, '0');
+    startDate = `${year}-${padMonth}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    endDate = `${year}-${padMonth}-${String(lastDay).padStart(2, '0')}`;
+  }
+
+  // 1. OUTWARD SUPPLIES (Sales / Output GST)
+  const outwardItems = db.prepare(`
+    SELECT 
+      ii.id,
+      ii.total_price,
+      COALESCE(ii.gst_rate, 12) as gst_rate,
+      i.created_at,
+      i.invoice_no
+    FROM invoice_items ii
+    JOIN invoices i ON ii.invoice_id = i.id
+    WHERE date(i.created_at) >= date(?) AND date(i.created_at) <= date(?)
+  `).all(startDate, endDate);
+
+  const outwardSlabs = {
+    0: { slab: 0, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+    5: { slab: 5, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+    12: { slab: 12, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+    18: { slab: 18, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 }
+  };
+
+  let totalOutwardGross = 0;
+  let totalOutwardTaxable = 0;
+  let totalOutputCgst = 0;
+  let totalOutputSgst = 0;
+
+  for (const it of outwardItems) {
+    const rate = Number(it.gst_rate) || 12;
+    if (!outwardSlabs[rate]) {
+      outwardSlabs[rate] = { slab: rate, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 };
+    }
+    const gross = Number(it.total_price) || 0;
+    const taxable = rate === 0 ? gross : gross / (1 + (rate / 100));
+    const tax = gross - taxable;
+    const halfTax = tax / 2;
+
+    outwardSlabs[rate].gross += gross;
+    outwardSlabs[rate].taxable += taxable;
+    outwardSlabs[rate].cgst += halfTax;
+    outwardSlabs[rate].sgst += halfTax;
+    outwardSlabs[rate].total_tax += tax;
+
+    totalOutwardGross += gross;
+    totalOutwardTaxable += taxable;
+    totalOutputCgst += halfTax;
+    totalOutputSgst += halfTax;
+  }
+
+  // 2. INWARD SUPPLIES (Purchases / Input Tax Credit - ITC)
+  const inwardItems = db.prepare(`
+    SELECT 
+      pi.id,
+      pi.purchase_rate,
+      pi.qty,
+      pi.discount_percent,
+      COALESCE(pi.gst_rate, 12) as gst_rate,
+      pi.total_amount,
+      p.invoice_date,
+      p.purchase_invoice_no
+    FROM purchase_items pi
+    JOIN purchases p ON pi.purchase_id = p.id
+    WHERE date(p.invoice_date) >= date(?) AND date(p.invoice_date) <= date(?)
+  `).all(startDate, endDate);
+
+  const inwardSlabs = {
+    0: { slab: 0, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+    5: { slab: 5, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+    12: { slab: 12, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+    18: { slab: 18, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 }
+  };
+
+  let totalInwardGross = 0;
+  let totalInwardTaxable = 0;
+  let totalInwardCgstItc = 0;
+  let totalInwardSgstItc = 0;
+
+  for (const it of inwardItems) {
+    const rate = Number(it.gst_rate) || 12;
+    if (!inwardSlabs[rate]) {
+      inwardSlabs[rate] = { slab: rate, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 };
+    }
+    const disc = Number(it.discount_percent) || 0;
+    const base = (Number(it.purchase_rate) || 0) * (Number(it.qty) || 0);
+    const taxable = base * (1 - disc / 100);
+    const tax = taxable * (rate / 100);
+    const halfTax = tax / 2;
+    const gross = taxable + tax;
+
+    inwardSlabs[rate].gross += gross;
+    inwardSlabs[rate].taxable += taxable;
+    inwardSlabs[rate].cgst += halfTax;
+    inwardSlabs[rate].sgst += halfTax;
+    inwardSlabs[rate].total_tax += tax;
+
+    totalInwardGross += gross;
+    totalInwardTaxable += taxable;
+    totalInwardCgstItc += halfTax;
+    totalInwardSgstItc += halfTax;
+  }
+
+  // 3. ITC REVERSALS (Sec 34 Expiry Debit Notes)
+  const debitItems = db.prepare(`
+    SELECT 
+      dni.id,
+      dni.taxable_value,
+      COALESCE(dni.gst_rate, 12) as gst_rate,
+      dni.cgst_amount,
+      dni.sgst_amount,
+      dni.total_claim,
+      dn.note_date,
+      dn.debit_note_no
+    FROM debit_note_items dni
+    JOIN debit_notes dn ON dni.debit_note_id = dn.id
+    WHERE date(dn.note_date) >= date(?) AND date(dn.note_date) <= date(?)
+  `).all(startDate, endDate);
+
+  const reversalSlabs = {
+    0: { slab: 0, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+    5: { slab: 5, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+    12: { slab: 12, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 },
+    18: { slab: 18, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 }
+  };
+
+  let totalReversedTaxable = 0;
+  let totalReversedCgst = 0;
+  let totalReversedSgst = 0;
+  let totalReversedGross = 0;
+
+  for (const it of debitItems) {
+    const rate = Number(it.gst_rate) || 12;
+    if (!reversalSlabs[rate]) {
+      reversalSlabs[rate] = { slab: rate, taxable: 0, cgst: 0, sgst: 0, total_tax: 0, gross: 0 };
+    }
+    const taxable = Number(it.taxable_value) || 0;
+    const cgst = Number(it.cgst_amount) || 0;
+    const sgst = Number(it.sgst_amount) || 0;
+    const totalTax = cgst + sgst;
+    const gross = Number(it.total_claim) || (taxable + totalTax);
+
+    reversalSlabs[rate].gross += gross;
+    reversalSlabs[rate].taxable += taxable;
+    reversalSlabs[rate].cgst += cgst;
+    reversalSlabs[rate].sgst += sgst;
+    reversalSlabs[rate].total_tax += totalTax;
+
+    totalReversedGross += gross;
+    totalReversedTaxable += taxable;
+    totalReversedCgst += cgst;
+    totalReversedSgst += sgst;
+  }
+
+  // 4. NET GST RECONCILIATION
+  const totalEligibleItc = (totalInwardCgstItc + totalInwardSgstItc);
+  const totalReversedItc = (totalReversedCgst + totalReversedSgst);
+  const netCgstItc = Math.max(0, totalInwardCgstItc - totalReversedCgst);
+  const netSgstItc = Math.max(0, totalInwardSgstItc - totalReversedSgst);
+  const netEligibleItc = netCgstItc + netSgstItc;
+
+  const totalOutputTax = totalOutputCgst + totalOutputSgst;
+  const netCgstPayable = Math.max(0, totalOutputCgst - netCgstItc);
+  const netSgstPayable = Math.max(0, totalOutputSgst - netSgstItc);
+  const netGstPayable = netCgstPayable + netSgstPayable;
+
+  const itcCreditCarriedForward = Math.max(0, netEligibleItc - totalOutputTax);
+
+  // 5. "40 GST" - AGGREGATE TURNOVER THRESHOLD TRACKER (Sec 22 CGST Act)
+  const curDate = new Date(startDate);
+  const curMonth = curDate.getMonth();
+  const curYear = curDate.getFullYear();
+  const fyStartYear = curMonth >= 3 ? curYear : curYear - 1;
+  const fyEndYear = fyStartYear + 1;
+  const fyStartDate = `${fyStartYear}-04-01`;
+  const fyEndDate = `${fyEndYear}-03-31`;
+
+  const fySalesRow = db.prepare(`
+    SELECT COALESCE(SUM(final_amount), 0) as total_turnover, COUNT(id) as invoice_count
+    FROM invoices
+    WHERE date(created_at) >= date(?) AND date(created_at) <= date(?)
+  `).get(fyStartDate, fyEndDate);
+
+  const annualTurnover = fySalesRow ? fySalesRow.total_turnover : 0;
+  const turnoverLimit = 4000000; // ₹40 Lakhs
+  const turnoverPercentage = Math.min(100, (annualTurnover / turnoverLimit) * 100);
+  const remainingAllowance = Math.max(0, turnoverLimit - annualTurnover);
+
+  let turnoverStatus = 'SAFE';
+  if (annualTurnover >= turnoverLimit) {
+    turnoverStatus = 'EXCEEDED';
+  } else if (annualTurnover >= 3000000) {
+    turnoverStatus = 'WARNING';
+  }
+
+  const roundedOutwardCgst = Number(totalOutputCgst.toFixed(2));
+  const roundedOutwardSgst = Number(totalOutputSgst.toFixed(2));
+  const roundedOutwardTotalTax = Number((roundedOutwardCgst + roundedOutwardSgst).toFixed(2));
+
+  const roundedInwardCgst = Number(totalInwardCgstItc.toFixed(2));
+  const roundedInwardSgst = Number(totalInwardSgstItc.toFixed(2));
+  const roundedInwardTotalItc = Number((roundedInwardCgst + roundedInwardSgst).toFixed(2));
+
+  const roundedRevCgst = Number(totalReversedCgst.toFixed(2));
+  const roundedRevSgst = Number(totalReversedSgst.toFixed(2));
+  const roundedRevTotal = Number((roundedRevCgst + roundedRevSgst).toFixed(2));
+
+  const roundedNetCgstItc = Math.max(0, Number((roundedInwardCgst - roundedRevCgst).toFixed(2)));
+  const roundedNetSgstItc = Math.max(0, Number((roundedInwardSgst - roundedRevSgst).toFixed(2)));
+  const roundedNetEligibleItc = Number((roundedNetCgstItc + roundedNetSgstItc).toFixed(2));
+
+  const roundedNetCgstPayable = Math.max(0, Number((roundedOutwardCgst - roundedNetCgstItc).toFixed(2)));
+  const roundedNetSgstPayable = Math.max(0, Number((roundedOutwardSgst - roundedNetSgstItc).toFixed(2)));
+  const roundedNetGstPayable = Number((roundedNetCgstPayable + roundedNetSgstPayable).toFixed(2));
+
+  const roundedItcCreditCarriedForward = Math.max(0, Number((roundedNetEligibleItc - roundedOutwardTotalTax).toFixed(2)));
+
+  return {
+    period: {
+      startDate,
+      endDate,
+      year,
+      month,
+      fyLabel: `FY ${fyStartYear}-${String(fyEndYear).slice(2)}`
+    },
+    outward: {
+      grossSales: Number(totalOutwardGross.toFixed(2)),
+      taxableValue: Number(totalOutwardTaxable.toFixed(2)),
+      cgst: roundedOutwardCgst,
+      sgst: roundedOutwardSgst,
+      totalTax: roundedOutwardTotalTax,
+      slabs: outwardSlabs,
+      invoiceCount: outwardItems.length
+    },
+    inward: {
+      grossPurchases: Number(totalInwardGross.toFixed(2)),
+      taxableValue: Number(totalInwardTaxable.toFixed(2)),
+      cgstItc: roundedInwardCgst,
+      sgstItc: roundedInwardSgst,
+      totalItc: roundedInwardTotalItc,
+      slabs: inwardSlabs,
+      itemCount: inwardItems.length
+    },
+    itcReversals: {
+      grossClaim: Number(totalReversedGross.toFixed(2)),
+      taxableValue: Number(totalReversedTaxable.toFixed(2)),
+      reversedCgst: roundedRevCgst,
+      reversedSgst: roundedRevSgst,
+      totalReversedItc: roundedRevTotal,
+      slabs: reversalSlabs,
+      itemCount: debitItems.length
+    },
+    netPosition: {
+      totalOutputTax: roundedOutwardTotalTax,
+      totalEligibleItc: roundedInwardTotalItc,
+      totalReversedItc: roundedRevTotal,
+      netEligibleItc: roundedNetEligibleItc,
+      netCgstPayable: roundedNetCgstPayable,
+      netSgstPayable: roundedNetSgstPayable,
+      netGstPayable: roundedNetGstPayable,
+      itcCreditCarriedForward: roundedItcCreditCarriedForward
+    },
+    turnoverTracker: {
+      limit: turnoverLimit,
+      annualTurnover: Number(annualTurnover.toFixed(2)),
+      remainingAllowance: Number(remainingAllowance.toFixed(2)),
+      turnoverPercentage: Number(turnoverPercentage.toFixed(2)),
+      status: turnoverStatus,
+      fyLabel: `FY ${fyStartYear}-${String(fyEndYear).slice(2)}`,
+      fyStartDate,
+      fyEndDate,
+      invoiceCount: fySalesRow ? fySalesRow.invoice_count : 0
+    }
+  };
+}
+
 function clearAllRecords() {
   if (!db) initDatabase();
   db.prepare(`DELETE FROM invoice_items`).run();
@@ -1832,5 +2213,7 @@ module.exports = {
   getDebitNotes,
   getDebitNoteDetails,
   createDebitNote,
+  getScheduleH1Register,
+  getGstTaxSummary,
   clearAllRecords
 };

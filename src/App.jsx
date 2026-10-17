@@ -6,6 +6,7 @@ import ExpiryRadar from './components/ExpiryRadar';
 import InventoryManager from './components/InventoryManager';
 import DailyRegisterKhata from './components/DailyRegisterKhata';
 import PurchaseDistributorManager from './components/PurchaseDistributorManager';
+import ComplianceGstHub from './components/ComplianceGstHub';
 import LoginScreen from './components/LoginScreen';
 import StoreSettingsModal from './components/StoreSettingsModal';
 import SuperAdminHubModal from './components/SuperAdminHubModal';
@@ -15,7 +16,7 @@ import { api } from './services/api';
 import { AlertCircle, Key } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('billing'); // 'billing' | 'expiry' | 'inventory' | 'purchases' | 'khata'
+  const [activeTab, setActiveTab] = useState('billing'); // 'billing' | 'expiry' | 'inventory' | 'purchases' | 'khata' | 'compliance'
   const [expiryAlertCount, setExpiryAlertCount] = useState(0);
   const [superAdminView, setSuperAdminView] = useState('console'); // 'console' | 'pos'
 
@@ -132,6 +133,9 @@ export default function App() {
       } else if (e.key === 'F5') {
         e.preventDefault();
         setActiveTab('khata');
+      } else if (e.key === 'F8') {
+        e.preventDefault();
+        setActiveTab('compliance');
       }
     };
 
@@ -263,6 +267,13 @@ export default function App() {
           )}
           {activeTab === 'khata' && (
             <DailyRegisterKhata
+              currentUser={currentUser}
+              featureToggles={featureToggles}
+              storeProfile={storeProfile}
+            />
+          )}
+          {activeTab === 'compliance' && (
+            <ComplianceGstHub
               currentUser={currentUser}
               featureToggles={featureToggles}
               storeProfile={storeProfile}

@@ -126,6 +126,10 @@ function setupIpcHandlers() {
   ipcMain.handle('db:getDebitNoteDetails', (_, noteId) => db.getDebitNoteDetails(noteId));
   ipcMain.handle('db:createDebitNote', (_, noteData, items) => db.createDebitNote(noteData, items));
 
+  // Compliance & Statutory Registers (FDA & GST)
+  ipcMain.handle('db:getScheduleH1Register', (_, filters) => db.getScheduleH1Register(filters));
+  ipcMain.handle('db:getGstTaxSummary', (_, period) => db.getGstTaxSummary(period));
+
   // System Utilities
   ipcMain.handle('sys:openExternalUrl', async (_, url) => {
     if (url && (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('mailto:'))) {

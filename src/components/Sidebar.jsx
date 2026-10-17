@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingCart, AlertTriangle, Boxes, BookOpen, Terminal, CheckCircle2, Truck } from 'lucide-react';
+import { ShoppingCart, AlertTriangle, Boxes, BookOpen, Terminal, CheckCircle2, Truck, ShieldCheck } from 'lucide-react';
 
 export default function Sidebar({ activeTab, setActiveTab, expiryAlertCount = 0 }) {
   const navItems = [
@@ -43,6 +43,15 @@ export default function Sidebar({ activeTab, setActiveTab, expiryAlertCount = 0 
       icon: BookOpen,
       shortcut: 'F5',
       badge: null
+    },
+    {
+      id: 'compliance',
+      label: 'Compliance & GST',
+      sublabel: 'FDA H1 & 3,18,40 Tax',
+      icon: ShieldCheck,
+      shortcut: 'F8',
+      badge: 'FDA',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
     }
   ];
 

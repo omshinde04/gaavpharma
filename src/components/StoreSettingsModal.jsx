@@ -532,6 +532,28 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
                   </div>
                 </div>
 
+                {/* Allow Cashier to Access Compliance & GST */}
+                <div
+                  onClick={() => handleToggleChange('allow_cashier_compliance', !toggles.allow_cashier_compliance)}
+                  className="p-3.5 flex items-center justify-between hover:bg-white cursor-pointer transition-colors"
+                >
+                  <div className="pr-4">
+                    <div className="font-semibold text-slate-900">Allow Cashiers to Access Compliance & GST Hub</div>
+                    <div className="text-[10px] text-slate-500">If disabled, only Store Owner can view Schedule H1 register & GSTR-3B tax data</div>
+                  </div>
+                  <div
+                    className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-150 ease-in-out shrink-0 ${
+                      toggles.allow_cashier_compliance ? 'bg-emerald-600' : 'bg-slate-300'
+                    }`}
+                  >
+                    <div
+                      className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-150 ease-in-out ${
+                        toggles.allow_cashier_compliance ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </div>
+                </div>
+
                 {/* Maximum Cashier Discount */}
                 <div className="p-3.5 flex items-center justify-between hover:bg-white transition-colors">
                   <div>

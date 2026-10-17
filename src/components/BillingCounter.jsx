@@ -5,6 +5,7 @@ import {
   Plus,
   Trash2,
   AlertCircle,
+  AlertTriangle,
   Tag,
   User,
   Phone,
@@ -19,7 +20,11 @@ import {
   Package,
   Layers,
   RotateCcw,
-  Sparkles
+  Sparkles,
+  PauseCircle,
+  PlayCircle,
+  Clock,
+  Check
 } from 'lucide-react';
 import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
@@ -43,11 +48,24 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
   const [paymentMode, setPaymentMode] = useState('cash'); // 'cash' | 'upi' | 'khata' | 'card'
   const [discount, setDiscount] = useState(0);
 
-  // Customer / Doctor Details
+  // Customer / Doctor Details (FDA Schedule H1 Rule 65)
   const [customerMobile, setCustomerMobile] = useState('');
   const [customerName, setCustomerName] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
   const [doctorName, setDoctorName] = useState('');
+  const [doctorRegNo, setDoctorRegNo] = useState('');
   const [existingKhataBalance, setExistingKhataBalance] = useState(null);
+
+  // Peak Hour "Hold & Resume" State (F6)
+  const [heldBills, setHeldBills] = useState(() => {
+    try {
+      const saved = localStorage.getItem('gaavpharma_held_bills');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [showHeldModal, setShowHeldModal] = useState(false);
 
   // Receipt Modal
   const [completedInvoice, setCompletedInvoice] = useState(null);
@@ -70,6 +88,15 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
       if (e.key === 'F4') {
         e.preventDefault();
         searchInputRef.current?.focus();
+        return;
+      }
+      if (e.key === 'F6') {
+        e.preventDefault();
+        if (cart.length > 0) {
+          handleHoldBill();
+        } else {
+          setShowHeldModal((prev) => !prev);
+        }
         return;
       }
       if (e.key === 'F8') {
@@ -108,7 +135,7 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cart, paymentMode, discount, customerMobile, customerName, doctorName]);
+  }, [cart, paymentMode, discount, customerMobile, customerName, customerAddress, doctorName, doctorRegNo, heldBills]);
 
   const cyclePaymentMode = () => {
     const modes = allowKhata ? ['cash', 'upi', 'khata', 'card'] : ['cash', 'upi', 'card'];
@@ -281,11 +308,73 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     setCart([]);
     setCustomerMobile('');
     setCustomerName('');
+    setCustomerAddress('');
     setDoctorName('');
+    setDoctorRegNo('');
     setDiscount(0);
     setPaymentMode('cash');
     setExistingKhataBalance(null);
     searchInputRef.current?.focus();
+  };
+
+  // Peak Hour "Hold & Resume" Handlers (F6)
+  const handleHoldBill = () => {
+    if (cart.length === 0) {
+      setShowHeldModal(true);
+      return;
+    }
+    const newHeld = {
+      id: 'HOLD-' + Date.now(),
+      heldAt: new Date().toISOString(),
+      customerName: customerName.trim() || 'Cash Customer',
+      customerMobile: customerMobile.trim() || '',
+      customerAddress: customerAddress.trim() || '',
+      doctorName: doctorName.trim() || '',
+      doctorRegNo: doctorRegNo.trim() || '',
+      cart: [...cart],
+      discount,
+      paymentMode,
+      totalAmount: netPayable
+    };
+    const updated = [newHeld, ...heldBills];
+    setHeldBills(updated);
+    try {
+      localStorage.setItem('gaavpharma_held_bills', JSON.stringify(updated));
+    } catch (e) {}
+    handleNewSale();
+    alert(`Bill for "${newHeld.customerName}" held safely (F6). Counter is now cleared for next customer!`);
+  };
+
+  const handleResumeBill = (held) => {
+    if (cart.length > 0) {
+      if (!window.confirm('Current active bill has items. Replace with this held bill?')) {
+        return;
+      }
+    }
+    setCart(held.cart || []);
+    setCustomerName(held.customerName || '');
+    setCustomerMobile(held.customerMobile || '');
+    setCustomerAddress(held.customerAddress || '');
+    setDoctorName(held.doctorName || '');
+    setDoctorRegNo(held.doctorRegNo || '');
+    setDiscount(held.discount || 0);
+    setPaymentMode(held.paymentMode || 'cash');
+
+    const updated = heldBills.filter((h) => h.id !== held.id);
+    setHeldBills(updated);
+    try {
+      localStorage.setItem('gaavpharma_held_bills', JSON.stringify(updated));
+    } catch (e) {}
+    setShowHeldModal(false);
+  };
+
+  const handleDiscardHeldBill = (id) => {
+    if (!window.confirm('Discard this held bill permanently?')) return;
+    const updated = heldBills.filter((h) => h.id !== id);
+    setHeldBills(updated);
+    try {
+      localStorage.setItem('gaavpharma_held_bills', JSON.stringify(updated));
+    } catch (e) {}
   };
 
   // Calculations
@@ -346,7 +435,9 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
       const invoiceData = {
         customer_name: customerName.trim() || 'Cash Customer',
         customer_mobile: customerMobile.trim() || null,
+        customer_address: customerAddress.trim() || 'Ghoti',
         doctor_name: doctorName.trim() || null,
+        doctor_reg_no: doctorRegNo.trim() || null,
         payment_mode: paymentMode,
         total_amount: Number(subtotal.toFixed(2)),
         discount: Number((parseFloat(discount) || 0).toFixed(2)),
@@ -495,6 +586,34 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
         {/* Counter Top Actions */}
         <div className="flex items-center space-x-2 shrink-0">
+          {heldBills.length > 0 && (
+            <button
+              onClick={() => setShowHeldModal(true)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold shadow-xs transition-colors"
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+              <span>Held Bills</span>
+              <span className="bg-amber-600 text-white rounded-full px-1.5 py-0.2 text-[10px] font-mono">
+                {heldBills.length}
+              </span>
+              <kbd className="text-[9px] bg-amber-200/60 text-amber-800 px-1 rounded font-mono">F6</kbd>
+            </button>
+          )}
+
+          <button
+            onClick={handleHoldBill}
+            disabled={cart.length === 0}
+            className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg border text-xs font-medium shadow-xs transition-colors ${
+              cart.length === 0
+                ? 'border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed'
+                : 'border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-800'
+            }`}
+            title="Hold current bill and clear counter for next customer (F6)"
+          >
+            <PauseCircle className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Hold Bill (F6)</span>
+          </button>
+
           <button
             onClick={handleNewSale}
             className="flex items-center space-x-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium shadow-xs transition-colors"
@@ -669,7 +788,7 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         {/* Right Side: Modern SaaS Checkout Dock */}
         <div className="w-80 bg-slate-50 p-3.5 flex flex-col justify-between overflow-y-auto shrink-0 border-l border-slate-200 space-y-3">
           <div className="space-y-3">
-            {/* Customer & Prescription Details */}
+            {/* Customer & Prescription Details (FDA Schedule H1 Compliant) */}
             <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs space-y-2.5">
               <div className="text-[11px] font-semibold text-slate-700 uppercase tracking-wide flex items-center justify-between">
                 <span>Customer & Doctor</span>
@@ -679,6 +798,19 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                   </span>
                 )}
               </div>
+
+              {/* FDA Schedule H1 Alert Notice */}
+              {cart.some((it) => it.is_schedule_h1 === 1 || it.is_schedule_h1 === true) && (
+                <div className="bg-amber-50 border border-amber-300 rounded-lg p-2.5 space-y-1 text-amber-950">
+                  <div className="flex items-center space-x-1.5 font-bold text-[11px] text-amber-900">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span>FDA Schedule H1 Active (Rule 65)</span>
+                  </div>
+                  <div className="text-[10px] text-amber-800 leading-tight">
+                    Prescribing Doctor & Patient Village are legally required for the statutory audit register.
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="text-[10px] font-medium text-slate-500 mb-0.5 block">
@@ -699,7 +831,7 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
               <div>
                 <label className="text-[10px] font-medium text-slate-500 mb-0.5 block">
-                  Customer Name
+                  Customer / Patient Name
                 </label>
                 <div className="relative flex items-center">
                   <User className="w-3 h-3 absolute left-2.5 text-slate-400" />
@@ -714,8 +846,39 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
               </div>
 
               <div>
+                <div className="flex items-center justify-between mb-0.5">
+                  <label className="text-[10px] font-medium text-slate-500 block">
+                    Patient Village / Address
+                  </label>
+                  <span className="text-[9px] text-slate-400 font-mono">FDA H1</span>
+                </div>
+                <div className="relative flex items-center">
+                  <MapPin className="w-3 h-3 absolute left-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={customerAddress}
+                    onChange={(e) => setCustomerAddress(e.target.value)}
+                    placeholder="e.g. Ghoti, Igatpuri, Bhavali..."
+                    className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-medium focus:bg-white transition-all"
+                  />
+                </div>
+                <div className="flex items-center gap-1 mt-1 flex-wrap">
+                  {['Ghoti', 'Igatpuri', 'Bhavali', 'Waki', 'Kavnai'].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setCustomerAddress(v)}
+                      className="px-1.5 py-0.5 bg-slate-100 hover:bg-slate-200 text-[9px] font-medium text-slate-600 rounded transition-colors"
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
                 <label className="text-[10px] font-medium text-slate-500 mb-0.5 block">
-                  Prescribing Doctor (Optional)
+                  Prescribing Doctor {cart.some((it) => it.is_schedule_h1 === 1 || it.is_schedule_h1 === true) && <span className="text-rose-600 font-bold">*</span>}
                 </label>
                 <div className="relative flex items-center">
                   <Stethoscope className="w-3 h-3 absolute left-2.5 text-slate-400" />
@@ -727,6 +890,22 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                     className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-medium focus:bg-white transition-all"
                   />
                 </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-0.5">
+                  <label className="text-[10px] font-medium text-slate-500 block">
+                    Doctor MMC Reg. No.
+                  </label>
+                  <span className="text-[9px] text-slate-400 font-mono">Rule 65</span>
+                </div>
+                <input
+                  type="text"
+                  value={doctorRegNo}
+                  onChange={(e) => setDoctorRegNo(e.target.value)}
+                  placeholder="e.g. MMC-2015/04/1892"
+                  className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:bg-white transition-all"
+                />
               </div>
             </div>
 
@@ -888,6 +1067,123 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                 className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-medium"
               >
                 Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Peak Hour Held Bills Modal (F6) */}
+      {showHeldModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95">
+            {/* Modal Header */}
+            <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold tracking-tight">Held Counter Bills (राखून ठेवलेली बिले)</h3>
+                  <p className="text-[11px] text-slate-400">
+                    {heldBills.length} parked customer {heldBills.length === 1 ? 'bill' : 'bills'} in peak hour queue • Hotkey <kbd className="font-mono bg-slate-800 px-1 py-0.5 rounded text-amber-300">F6</kbd>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowHeldModal(false)}
+                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Held Bills List */}
+            <div className="p-4 overflow-y-auto flex-1 divide-y divide-slate-100 space-y-2">
+              {heldBills.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 space-y-2">
+                  <PauseCircle className="w-10 h-10 mx-auto text-slate-300 stroke-1" />
+                  <div className="text-xs font-semibold text-slate-600">No Bills Currently on Hold</div>
+                  <div className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                    During busy counter rush, click "Hold Bill (F6)" to park a customer's cart and serve the next person instantly!
+                  </div>
+                </div>
+              ) : (
+                heldBills.map((held, idx) => (
+                  <div
+                    key={held.id}
+                    className="pt-2 first:pt-0 pb-2 flex items-start justify-between gap-3 hover:bg-slate-50 p-3 rounded-xl border border-slate-100 transition-colors"
+                  >
+                    <div className="space-y-1 flex-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-xs text-slate-900">{held.customerName}</span>
+                        {held.customerMobile && (
+                          <span className="text-[11px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded">
+                            {held.customerMobile}
+                          </span>
+                        )}
+                        {held.customerAddress && (
+                          <span className="text-[10px] text-slate-500 flex items-center gap-0.5">
+                            <MapPin className="w-2.5 h-2.5 text-slate-400" />
+                            {held.customerAddress}
+                          </span>
+                        )}
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {new Date(held.heldAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+
+                      {/* Items Summary */}
+                      <div className="text-[11px] text-slate-600 line-clamp-2">
+                        {(held.cart || []).map((it) => `${it.product_name} (${it.qty}${it.is_loose_tablet ? ' tabs' : ' strips'})`).join(', ')}
+                      </div>
+
+                      <div className="flex items-center space-x-3 text-[11px] font-medium text-slate-700 pt-0.5">
+                        <span className="font-mono text-emerald-700 font-bold">
+                          ₹{Number(held.totalAmount || 0).toFixed(2)}
+                        </span>
+                        <span className="text-slate-400">•</span>
+                        <span className="text-slate-500">{held.cart?.length || 0} items</span>
+                        {held.doctorName && (
+                          <>
+                            <span className="text-slate-400">•</span>
+                            <span className="text-slate-500">Dr. {held.doctorName}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-1.5 shrink-0">
+                      <button
+                        onClick={() => handleResumeBill(held)}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-xs transition-colors"
+                      >
+                        <PlayCircle className="w-3.5 h-3.5" />
+                        <span>Resume</span>
+                      </button>
+                      <button
+                        onClick={() => handleDiscardHeldBill(held.id)}
+                        className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-xs transition-colors"
+                        title="Discard held bill"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-between items-center text-xs">
+              <span className="text-slate-500">
+                Tip: Press <kbd className="font-mono bg-white border px-1 py-0.5 rounded text-slate-700 font-semibold">F6</kbd> anywhere on counter to quick-hold or recall.
+              </span>
+              <button
+                onClick={() => setShowHeldModal(false)}
+                className="px-3.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium rounded-lg text-xs"
+              >
+                Close
               </button>
             </div>
           </div>

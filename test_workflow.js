@@ -419,10 +419,99 @@ async function runTestSuite() {
   assert(fetchedDebitNote && fetchedDebitNote.items.length === 1, 'getDebitNoteDetails retrieves itemized breakdown with CGST and SGST');
   assert(fetchedDebitNote.items[0].batch_no === 'EXP8821', 'Debit note item reflects correct batch number');
 
-  // 9.7 Verify clearAllRecords wipes debit notes
+  // ========================================================
+  // 10. FDA Schedule H1 Legal Compliance Register (Rule 65)
+  // ========================================================
+  console.log('\n💊 [TEST GROUP 10] FDA Schedule H1 Legal Compliance Register (Rule 65)');
+
+  // 10.1 Create an invoice containing Schedule H1 antibiotic
+  const h1InvoiceData = {
+    customer_name: 'Baburao Kale',
+    customer_mobile: '9822011223',
+    customer_address: 'Ghoti Khurd',
+    doctor_name: 'Dr. S. K. Joshi',
+    doctor_reg_no: 'MMC-2012/04/8912',
+    payment_mode: 'cash',
+    total_amount: 204.50,
+    discount: 0,
+    final_amount: 204.50
+  };
+
+  const h1InvoiceItems = [
+    {
+      product_id: 2,
+      product_name: 'Augmentin 625 Duo',
+      generic_salt: 'Amoxicillin 500mg + Clavulanic Acid 125mg',
+      batch_id: 1,
+      batch_no: 'AG9921',
+      expiry_date: '12/26',
+      is_schedule_h1: 1,
+      gst_rate: 12,
+      qty: 1,
+      unit_price: 204.50,
+      total_price: 204.50
+    }
+  ];
+
+  const h1InvoiceResult = await api.createInvoice(h1InvoiceData, h1InvoiceItems);
+  assert(h1InvoiceResult && h1InvoiceResult.invoice_no, 'Schedule H1 retail counter invoice generated successfully');
+
+  // 10.2 Query Schedule H1 Register
+  const h1Register = await api.getScheduleH1Register({ search: 'Augmentin' });
+  assert(Array.isArray(h1Register) && h1Register.length > 0, 'getScheduleH1Register returns logged prescription entries');
+
+  const h1Entry = h1Register[0];
+  assert(h1Entry.patient_name === 'Baburao Kale', 'H1 Register captures Patient Name (Baburao Kale)');
+  assert(h1Entry.patient_address === 'Ghoti Khurd', 'H1 Register captures Patient Village/Address (Ghoti Khurd)');
+  assert(h1Entry.doctor_name.includes('Joshi'), 'H1 Register captures Prescribing Physician (Dr. S. K. Joshi)');
+  assert(h1Entry.doctor_reg_no === 'MMC-2012/04/8912', 'H1 Register captures MMC Registration Number');
+  assert(h1Entry.batch_no === 'AG9921', 'H1 Register captures Batch Number (AG9921)');
+  assert(Number(h1Entry.qty) === 1, 'H1 Register captures Quantity Supplied');
+
+  // 10.3 Test Search filter on Register
+  const docSearch = await api.getScheduleH1Register({ search: 'MMC-2012' });
+  assert(docSearch.length > 0, 'Schedule H1 Register searchable by Doctor Registration No');
+
+  // ========================================================
+  // 11. GSTR-3B & GSTR-1 Tax Summary Hub ("3, 18, 40 GST")
+  // ========================================================
+  console.log('\n📊 [TEST GROUP 11] GSTR-3B & GSTR-1 Tax Summary Hub ("3, 18, 40 GST")');
+
+  const now = new Date();
+  const taxSummary = await api.getGstTaxSummary({
+    month: now.getMonth() + 1,
+    year: now.getFullYear()
+  });
+
+  assert(taxSummary && taxSummary.period, 'getGstTaxSummary returns statutory period metadata');
+  assert(taxSummary.outward && taxSummary.outward.grossSales > 0, 'Outward taxable supplies (Output GST) aggregated from counter sales');
+  assert(taxSummary.outward.slabs[12].taxable > 0, '12% GST Slab outward taxable value calculated accurately');
+  assert(Number(taxSummary.outward.totalTax) === Number((taxSummary.outward.cgst + taxSummary.outward.sgst).toFixed(2)), 'Output CGST + SGST perfectly reconciles to Total Output Tax');
+
+  assert(taxSummary.inward && taxSummary.inward.totalItc > 0, 'Inward supplies (ITC) aggregated from wholesale purchase bills');
+  assert(taxSummary.itcReversals && taxSummary.itcReversals.totalReversedItc > 0, 'Section 34 Expiry Debit Note reversals credited to tax ledger');
+
+  assert(
+    Math.abs(taxSummary.netPosition.netEligibleItc - (taxSummary.netPosition.totalEligibleItc - taxSummary.netPosition.totalReversedItc)) < 0.05,
+    'Net Eligible ITC accurately reverses debit note return claims (Net ITC = Inward ITC - Reversed ITC)'
+  );
+
+  // 11.2 "40 GST" Aggregate Annual Turnover Tracker Test
+  assert(taxSummary.turnoverTracker.limit === 4000000, 'Statutory Maharashtra GST Threshold configured as ₹40.00 Lakhs');
+  assert(taxSummary.turnoverTracker.annualTurnover > 0, 'Financial Year turnover tracked dynamically');
+  assert(taxSummary.turnoverTracker.status === 'SAFE', 'Turnover tracker evaluates SAFE status for small chemist (< ₹40L)');
+  assert(taxSummary.turnoverTracker.remainingAllowance === 4000000 - taxSummary.turnoverTracker.annualTurnover, 'Remaining tax-free turnover allowance computed correctly');
+
+  // 11.3 Verify complete data wipe with clearAllRecords
+  console.log('\n🧹 [DATABASE INTEGRITY] Full Database Reset');
   await api.clearAllRecords();
   const debitNotesAfterClear = await api.getDebitNotes();
+  const purchasesAfterClear = await api.getPurchases();
+  const h1AfterClear = await api.getScheduleH1Register();
+
   assert(debitNotesAfterClear.length === 0, 'clearAllRecords wipes all debit notes from storage');
+  assert(purchasesAfterClear.length === 0, 'clearAllRecords wipes all wholesale purchases from storage');
+  assert(h1AfterClear.length === 0, 'clearAllRecords resets Schedule H1 register entries to zero');
 
   console.log('\n========================================================');
   console.log(`🏁 TEST RESULTS: ${passed} PASSED | ${failed} FAILED`);
