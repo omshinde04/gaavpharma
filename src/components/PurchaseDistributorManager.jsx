@@ -27,7 +27,14 @@ import {
   ShieldAlert,
   RotateCcw,
   Printer,
-  Share2
+  Share2,
+  BookOpen,
+  Send,
+  Copy,
+  Check,
+  ShoppingCart,
+  Filter,
+  ArrowRightCircle
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -52,13 +59,24 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
     );
   }
 
-  const [activeSubTab, setActiveSubTab] = useState('bills'); // 'bills' | 'distributors' | 'debit_notes'
+  const [activeSubTab, setActiveSubTab] = useState('bills'); // 'bills' | 'distributors' | 'debit_notes' | 'shortage'
   const [purchases, setPurchases] = useState([]);
   const [distributors, setDistributors] = useState([]);
   const [debitNotes, setDebitNotes] = useState([]);
+  const [shortageItems, setShortageItems] = useState([]);
   const [products, setProducts] = useState([]);
   const [summary, setSummary] = useState({ total_bills: 0, total_spent: 0, total_payable: 0, distributor_count: 0 });
   const [isLoading, setIsLoading] = useState(false);
+
+  // Shortage Diary ("तोटा नोंदवही") State
+  const [shortageStatusFilter, setShortageStatusFilter] = useState('ALL'); // 'ALL' | 'PENDING' | 'ORDERED'
+  const [shortageDistFilter, setShortageDistFilter] = useState('all');
+  const [shortageViewMode, setShortageViewMode] = useState('grouped'); // 'grouped' | 'table'
+  const [showAddShortageModal, setShowAddShortageModal] = useState(false);
+  const [showWhatsAppPreviewModal, setShowWhatsAppPreviewModal] = useState(null); // { distributor, items, text }
+  const [isSyncingShortages, setIsSyncingShortages] = useState(false);
+  const [shortageToast, setShortageToast] = useState(null);
+  const [copiedId, setCopiedId] = useState(null);
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -141,20 +159,36 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
   };
   const [debitNoteItems, setDebitNoteItems] = useState([{ ...initialDebitItemRow }]);
 
+  // New Shortage Item Form State
+  const initialShortageForm = {
+    product_id: '',
+    medicine_name: '',
+    generic_salt: '',
+    current_stock: 0,
+    min_stock_alert: 10,
+    suggested_qty: 10,
+    distributor_id: '',
+    source: 'COUNTER_MANUAL',
+    notes: ''
+  };
+  const [newShortageForm, setNewShortageForm] = useState(initialShortageForm);
+
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [distList, purchaseList, prodList, summ, notesList] = await Promise.all([
+      const [distList, purchaseList, prodList, summ, notesList, diaryList] = await Promise.all([
         api.getDistributors(),
         api.getPurchases(50),
         api.getAllProducts('all'),
         api.getPurchaseSummary(),
-        api.getDebitNotes ? api.getDebitNotes(50) : Promise.resolve([])
+        api.getDebitNotes ? api.getDebitNotes(50) : Promise.resolve([]),
+        api.getShortageDiary ? api.getShortageDiary({ status: 'ALL' }) : Promise.resolve([])
       ]);
       setDistributors(distList || []);
       setPurchases(purchaseList || []);
       setProducts(prodList || []);
       setDebitNotes(notesList || []);
+      setShortageItems(diaryList || []);
       if (summ) setSummary(summ);
       if (distList && distList.length > 0 && !purchaseForm.distributor_id) {
         setPurchaseForm(prev => ({ ...prev, distributor_id: String(distList[0].id) }));
@@ -541,6 +575,170 @@ Generated via GaavPharma Pharmacy ERP`;
     return debitNotes.reduce((acc, dn) => acc + (dn.total_claim_amount || 0), 0);
   }, [debitNotes]);
 
+  // Shortage Handlers ("तोटा नोंदवही")
+  const handleSyncAutoShortages = async () => {
+    setIsSyncingShortages(true);
+    try {
+      const res = await api.syncAutoShortages();
+      const updated = await api.getShortageDiary({ status: 'ALL' });
+      setShortageItems(updated || []);
+      setShortageToast(`तोटा वही सिंक पूर्ण! ${res?.syncedCount || 0} औषधे नोंदवली गेली.`);
+      setTimeout(() => setShortageToast(null), 3500);
+    } catch (err) {
+      console.error('Error syncing shortages:', err);
+    } finally {
+      setIsSyncingShortages(false);
+    }
+  };
+
+  const handleSaveNewShortageItem = async (e) => {
+    e.preventDefault();
+    if (!newShortageForm.medicine_name.trim()) {
+      alert('Please enter medicine name');
+      return;
+    }
+    try {
+      await api.addShortageItem(newShortageForm);
+      setShowAddShortageModal(false);
+      setNewShortageForm(initialShortageForm);
+      const updated = await api.getShortageDiary({ status: 'ALL' });
+      setShortageItems(updated || []);
+      setShortageToast('नवीन औषध तोटा नोंदवहीत जोडले गेले!');
+      setTimeout(() => setShortageToast(null), 3000);
+    } catch (err) {
+      console.error('Error saving shortage:', err);
+      alert(err.message);
+    }
+  };
+
+  const handleUpdateShortageQty = async (id, delta) => {
+    const item = shortageItems.find(s => s.id === id);
+    if (!item) return;
+    const newQty = Math.max(1, (item.suggested_qty || 10) + delta);
+    try {
+      await api.updateShortageItem(id, { suggested_qty: newQty });
+      setShortageItems(prev => prev.map(s => s.id === id ? { ...s, suggested_qty: newQty } : s));
+    } catch (err) {
+      console.error('Error updating qty:', err);
+    }
+  };
+
+  const handleToggleOrderStatus = async (item) => {
+    try {
+      const newStatus = item.status === 'ORDERED' ? 'PENDING' : 'ORDERED';
+      await api.updateShortageItem(item.id, { status: newStatus });
+      setShortageItems(prev => prev.map(s => s.id === item.id ? { ...s, status: newStatus, ordered_at: newStatus === 'ORDERED' ? new Date().toISOString() : null } : s));
+    } catch (err) {
+      console.error('Error toggling status:', err);
+    }
+  };
+
+  const handleDeleteShortage = async (id) => {
+    if (!confirm('ही औषध नोंद तोटा वहीतून हटवायची आहे का?')) return;
+    try {
+      await api.deleteShortageItem(id);
+      setShortageItems(prev => prev.filter(s => s.id !== id));
+    } catch (err) {
+      console.error('Error deleting shortage:', err);
+    }
+  };
+
+  const handleSendGroupWhatsAppPO = async (distributor, items) => {
+    const text = api.generateWhatsAppPOText({ storeProfile, distributor, items });
+    const rawPhone = distributor?.phone ? distributor.phone.replace(/[^0-9]/g, '') : '';
+    const phone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
+    const url = phone
+      ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
+      : `https://web.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+
+    api.openExternalUrl(url);
+    await api.markShortageAsOrdered(items.map(i => i.id), distributor?.id);
+    const updated = await api.getShortageDiary({ status: 'ALL' });
+    setShortageItems(updated || []);
+    setShortageToast(`WhatsApp खरेदी ऑर्डर पाठवली! ${items.length} आयटम्स ORDERED मार्क झाले.`);
+    setTimeout(() => setShortageToast(null), 4000);
+  };
+
+  const handleCopyGroupPOText = (distributor, items) => {
+    const text = api.generateWhatsAppPOText({ storeProfile, distributor, items });
+    navigator.clipboard.writeText(text);
+    setCopiedId(distributor?.id || 'unassigned');
+    setTimeout(() => setCopiedId(null), 2500);
+    setShortageToast('खरेदी ऑर्डर क्लिपबोर्डवर कॉपी केली!');
+    setTimeout(() => setShortageToast(null), 3000);
+  };
+
+  const handleConvertGroupToInward = (distributor, items) => {
+    if (distributor && distributor.id) {
+      setPurchaseForm(prev => ({
+        ...prev,
+        distributor_id: String(distributor.id)
+      }));
+    }
+    const rows = items.map(item => {
+      const prod = products.find(p => p.id === item.product_id);
+      const firstBatch = prod?.batches?.[0];
+      return {
+        product_id: item.product_id ? String(item.product_id) : '',
+        product_name: item.medicine_name,
+        generic_salt: item.generic_salt || prod?.generic_salt || '',
+        batch_no: '',
+        expiry_date: '',
+        qty: String(item.suggested_qty || 10),
+        free_qty: '0',
+        purchase_rate: firstBatch ? String(firstBatch.purchase_rate || '') : '',
+        gst_rate: '12',
+        discount_percent: '0',
+        mrp: firstBatch ? String(firstBatch.mrp || '') : ''
+      };
+    });
+    setPurchaseItems(rows.length > 0 ? rows : [{ ...initialItemRow }]);
+    setShowInwardModal(true);
+  };
+
+  const filteredShortageItems = useMemo(() => {
+    return shortageItems.filter(item => {
+      const q = searchQuery.toLowerCase().trim();
+      const matchQuery = !q ||
+        item.medicine_name?.toLowerCase().includes(q) ||
+        item.generic_salt?.toLowerCase().includes(q) ||
+        item.dist_name?.toLowerCase().includes(q) ||
+        item.notes?.toLowerCase().includes(q);
+
+      const matchStatus = shortageStatusFilter === 'ALL' || item.status === shortageStatusFilter;
+      const matchDist = shortageDistFilter === 'all' ||
+        (shortageDistFilter === 'unassigned' && !item.distributor_id) ||
+        String(item.distributor_id) === String(shortageDistFilter);
+
+      return matchQuery && matchStatus && matchDist;
+    });
+  }, [shortageItems, searchQuery, shortageStatusFilter, shortageDistFilter]);
+
+  const shortageDistributorGroups = useMemo(() => {
+    const groups = {};
+    filteredShortageItems.forEach(item => {
+      const distId = item.distributor_id || 'unassigned';
+      if (!groups[distId]) {
+        const distObj = distributors.find(d => String(d.id) === String(distId));
+        groups[distId] = {
+          distributorId: distId,
+          distributor: distObj || { id: null, name: item.dist_name || 'Unassigned Wholesalers (सप्लायर निवडायचा आहे)', phone: '' },
+          items: []
+        };
+      }
+      groups[distId].items.push(item);
+    });
+    return Object.values(groups);
+  }, [filteredShortageItems, distributors]);
+
+  const pendingShortageCount = useMemo(() => {
+    return shortageItems.filter(s => s.status === 'PENDING').length;
+  }, [shortageItems]);
+
+  const orderedShortageCount = useMemo(() => {
+    return shortageItems.filter(s => s.status === 'ORDERED').length;
+  }, [shortageItems]);
+
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-50 overflow-hidden select-none font-sans text-xs">
       {/* Top Header Bar */}
@@ -568,37 +766,61 @@ Generated via GaavPharma Pharmacy ERP`;
             <span>Refresh</span>
           </button>
 
-          <button
-            onClick={() => setShowAddDistributorModal(true)}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold shadow-2xs transition-colors"
-          >
-            <Building2 className="w-3.5 h-3.5 text-slate-500" />
-            <span>+ New Distributor</span>
-          </button>
+          {activeSubTab === 'shortage' ? (
+            <>
+              <button
+                onClick={handleSyncAutoShortages}
+                disabled={isSyncingShortages}
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold shadow-2xs transition-colors"
+                title="Check all products against min stock alert and auto-fill shortages"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-amber-700 ${isSyncingShortages ? 'animate-spin' : ''}`} />
+                <span>Auto-Scan Shortages</span>
+              </button>
 
-          <button
-            onClick={() => setShowNewDebitNoteModal(true)}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-800 text-xs font-semibold shadow-2xs transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
-            <span>+ Expiry Debit Note</span>
-          </button>
+              <button
+                onClick={() => setShowAddShortageModal(true)}
+                className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ तोटा नोंदवा (Add Item)</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setShowAddDistributorModal(true)}
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold shadow-2xs transition-colors"
+              >
+                <Building2 className="w-3.5 h-3.5 text-slate-500" />
+                <span>+ New Distributor</span>
+              </button>
 
-          <button
-            onClick={() => setShowInwardModal(true)}
-            className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            <span>+ Inward Purchase Bill</span>
-          </button>
+              <button
+                onClick={() => setShowNewDebitNoteModal(true)}
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-800 text-xs font-semibold shadow-2xs transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                <span>+ Expiry Debit Note</span>
+              </button>
+
+              <button
+                onClick={() => setShowInwardModal(true)}
+                className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Inward Purchase Bill</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {/* KPI Stats Cards */}
-      <div className="grid grid-cols-4 gap-3.5 p-4 bg-slate-50 border-b border-slate-200/80 shrink-0">
+      <div className="grid grid-cols-5 gap-3 p-4 bg-slate-50 border-b border-slate-200/80 shrink-0">
         <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-xs">
           <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
-            <span>Total Wholesale Purchases</span>
+            <span>Wholesale Purchases</span>
             <FileText className="w-3.5 h-3.5 text-blue-600" />
           </div>
           <div className="text-xl font-bold font-mono text-slate-900 mt-1">
@@ -611,7 +833,7 @@ Generated via GaavPharma Pharmacy ERP`;
 
         <div className="p-3 bg-white rounded-xl border border-rose-200 shadow-xs">
           <div className="flex items-center justify-between text-[10px] font-semibold text-rose-800 uppercase tracking-wider">
-            <span>Total Accounts Payable (आपले देणे)</span>
+            <span>Payable (आपले देणे)</span>
             <DollarSign className="w-3.5 h-3.5 text-rose-600" />
           </div>
           <div className="text-xl font-bold font-mono text-rose-700 mt-1">
@@ -622,29 +844,49 @@ Generated via GaavPharma Pharmacy ERP`;
           </div>
         </div>
 
-        <div className="p-3 bg-white rounded-xl border border-amber-200 shadow-xs">
-          <div className="flex items-center justify-between text-[10px] font-semibold text-amber-800 uppercase tracking-wider">
-            <span>Expiry Claims Credited (माल परतावा)</span>
-            <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+        <div className="p-3 bg-white rounded-xl border border-rose-200 shadow-xs">
+          <div className="flex items-center justify-between text-[10px] font-semibold text-rose-800 uppercase tracking-wider">
+            <span>Expiry Claims (परतावा)</span>
+            <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
           </div>
-          <div className="text-xl font-bold font-mono text-amber-700 mt-1">
+          <div className="text-xl font-bold font-mono text-rose-700 mt-1">
             ₹{totalDebitClaim.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
           </div>
-          <div className="text-[10px] text-amber-600 mt-0.5">
-            {debitNotes.length} GST debit notes issued
+          <div className="text-[10px] text-rose-600 mt-0.5">
+            {debitNotes.length} GST debit notes
+          </div>
+        </div>
+
+        <div 
+          onClick={() => setActiveSubTab('shortage')}
+          className="p-3 bg-white rounded-xl border border-amber-300 shadow-xs cursor-pointer hover:border-amber-400 transition-colors"
+        >
+          <div className="flex items-center justify-between text-[10px] font-semibold text-amber-800 uppercase tracking-wider">
+            <span>Shortage Diary (तोटा नोंद)</span>
+            <BookOpen className="w-3.5 h-3.5 text-amber-600" />
+          </div>
+          <div className="text-xl font-bold font-mono text-amber-700 mt-1 flex items-baseline gap-2">
+            <span>{pendingShortageCount}</span>
+            <span className="text-[11px] font-normal text-slate-500 font-sans">
+              to order ({orderedShortageCount} sent)
+            </span>
+          </div>
+          <div className="text-[10px] text-amber-700 font-medium mt-0.5 flex items-center gap-1">
+            <span>1-Click WhatsApp POs</span>
+            <ArrowRightCircle className="w-2.5 h-2.5 text-amber-600" />
           </div>
         </div>
 
         <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-xs">
           <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
-            <span>Registered Distributors</span>
+            <span>Stockists & Wholesalers</span>
             <Building2 className="w-3.5 h-3.5 text-purple-600" />
           </div>
           <div className="text-xl font-bold font-mono text-slate-900 mt-1">
             {distributors.length}
           </div>
           <div className="text-[10px] text-slate-400 mt-0.5">
-            Stockists & wholesalers in Ghoti/Nashik
+            Ghoti & Nashik agencies
           </div>
         </div>
       </div>
@@ -687,6 +929,25 @@ Generated via GaavPharma Pharmacy ERP`;
             <RotateCcw className="w-3.5 h-3.5" />
             <span>Expiry Debit Notes (माल परतावा) ({debitNotes.length})</span>
           </button>
+
+          <button
+            onClick={() => setActiveSubTab('shortage')}
+            className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 ${
+              activeSubTab === 'shortage'
+                ? 'border-amber-600 text-amber-900 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5 text-amber-600" />
+            <span>Shortage Diary & WhatsApp Orders (तोटा नोंदवही)</span>
+            {pendingShortageCount > 0 ? (
+              <span className="bg-amber-600 text-white text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold">
+                {pendingShortageCount}
+              </span>
+            ) : (
+              <span className="text-[10px] text-slate-400 font-mono">({shortageItems.length})</span>
+            )}
+          </button>
         </div>
 
         {/* Search Input */}
@@ -699,7 +960,9 @@ Generated via GaavPharma Pharmacy ERP`;
                 ? 'Search by bill no, supplier...'
                 : activeSubTab === 'distributors'
                 ? 'Search supplier, phone, GSTIN...'
-                : 'Search debit note no, supplier...'
+                : activeSubTab === 'debit_notes'
+                ? 'Search debit note no, supplier...'
+                : 'Search shortage medicine, salt, stockist...'
             }
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -955,6 +1218,446 @@ Generated via GaavPharma Pharmacy ERP`;
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* SUBTAB 4: Shortage Diary & WhatsApp Purchase Orders ("तोटा नोंदवही") */}
+        {activeSubTab === 'shortage' && (
+          <div className="space-y-4">
+            {/* Shortage Filter & View Mode Controls Bar */}
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between gap-4">
+              {/* Left: Status Filter Pills */}
+              <div className="flex items-center space-x-2">
+                <span className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                  <Filter className="w-3 h-3 text-slate-400" />
+                  <span>Status:</span>
+                </span>
+                <div className="flex items-center space-x-1.5 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                  <button
+                    onClick={() => setShortageStatusFilter('ALL')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                      shortageStatusFilter === 'ALL'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    All ({shortageItems.length})
+                  </button>
+                  <button
+                    onClick={() => setShortageStatusFilter('PENDING')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1.5 transition-all ${
+                      shortageStatusFilter === 'PENDING'
+                        ? 'bg-white text-amber-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                    <span>Pending ({pendingShortageCount})</span>
+                  </button>
+                  <button
+                    onClick={() => setShortageStatusFilter('ORDERED')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1.5 transition-all ${
+                      shortageStatusFilter === 'ORDERED'
+                        ? 'bg-white text-blue-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Truck className="w-3 h-3 text-blue-600" />
+                    <span>Ordered ({orderedShortageCount})</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Middle: Distributor Filter */}
+              <div className="flex items-center space-x-2">
+                <span className="text-[11px] font-semibold text-slate-500">Stockist:</span>
+                <select
+                  value={shortageDistFilter}
+                  onChange={(e) => setShortageDistFilter(e.target.value)}
+                  className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 focus:bg-white"
+                >
+                  <option value="all">All Stockists & Wholesalers</option>
+                  <option value="unassigned">Unassigned (सप्लायर ठरवायचा आहे)</option>
+                  {distributors.map(d => (
+                    <option key={d.id} value={String(d.id)}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Right: View Mode Toggle */}
+              <div className="flex items-center space-x-1.5 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                <button
+                  onClick={() => setShortageViewMode('grouped')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-all ${
+                    shortageViewMode === 'grouped'
+                      ? 'bg-white text-blue-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Building2 className="w-3 h-3 text-blue-600" />
+                  <span>Group by Stockist</span>
+                </button>
+                <button
+                  onClick={() => setShortageViewMode('table')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-all ${
+                    shortageViewMode === 'table'
+                      ? 'bg-white text-blue-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Layers className="w-3 h-3 text-slate-600" />
+                  <span>List View</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Empty State */}
+            {filteredShortageItems.length === 0 ? (
+              <div className="bg-white rounded-xl border border-slate-200 p-12 text-center shadow-xs">
+                <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-amber-200/80 shadow-2xs">
+                  <BookOpen className="w-7 h-7" />
+                </div>
+                <h3 className="text-sm font-bold text-slate-800">तोटा नोंदवहीत कोणतीही औषध नोंद नाही (Shortage Diary is Clear)</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 leading-relaxed">
+                  All medicines are currently stocked above their minimum alert levels. You can auto-scan your entire inventory or manually log walk-in customer demand.
+                </p>
+                <div className="mt-4 flex items-center justify-center space-x-2">
+                  <button
+                    onClick={handleSyncAutoShortages}
+                    disabled={isSyncingShortages}
+                    className="px-3.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold shadow-2xs transition-colors flex items-center gap-1.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-amber-700 ${isSyncingShortages ? 'animate-spin' : ''}`} />
+                    <span>Auto-Scan Inventory for Low Stock</span>
+                  </button>
+                  <button
+                    onClick={() => setShowAddShortageModal(true)}
+                    className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Manually Log Medicine Demand</span>
+                  </button>
+                </div>
+              </div>
+            ) : shortageViewMode === 'grouped' ? (
+              /* Grouped by Distributor Cards View */
+              <div className="grid grid-cols-1 gap-4">
+                {shortageDistributorGroups.map((group) => {
+                  const dist = group.distributor;
+                  const isUnassigned = group.distributorId === 'unassigned' || !dist?.id;
+                  const pendingItems = group.items.filter(i => i.status === 'PENDING');
+                  const orderedItems = group.items.filter(i => i.status === 'ORDERED');
+
+                  return (
+                    <div
+                      key={group.distributorId}
+                      className={`bg-white rounded-xl border shadow-xs overflow-hidden transition-all ${
+                        isUnassigned
+                          ? 'border-slate-300'
+                          : 'border-slate-200 hover:border-blue-300'
+                      }`}
+                    >
+                      {/* Card Header */}
+                      <div className="p-3.5 bg-slate-50/90 border-b border-slate-200/80 flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs ${
+                            isUnassigned
+                              ? 'bg-slate-200 text-slate-700'
+                              : 'bg-blue-100 text-blue-800 border border-blue-200'
+                          }`}>
+                            <Building2 className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <h4 className="font-bold text-sm text-slate-900 tracking-tight">
+                                {dist?.name || 'Unassigned Wholesalers (सप्लायर ठरवायचा आहे)'}
+                              </h4>
+                              {pendingItems.length > 0 && (
+                                <span className="bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.2 rounded-full text-[10px] font-bold">
+                                  {pendingItems.length} to order
+                                </span>
+                              )}
+                              {orderedItems.length > 0 && (
+                                <span className="bg-blue-100 text-blue-900 border border-blue-300 px-2 py-0.2 rounded-full text-[10px] font-semibold flex items-center gap-1">
+                                  <Truck className="w-2.5 h-2.5" />
+                                  <span>{orderedItems.length} ordered</span>
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-500 flex items-center space-x-3 mt-0.5">
+                              {dist?.phone && (
+                                <span className="flex items-center gap-1 font-mono">
+                                  <Phone className="w-3 h-3 text-slate-400" />
+                                  <span>{dist.phone}</span>
+                                </span>
+                              )}
+                              {dist?.dl_number && (
+                                <span className="font-mono text-slate-400">
+                                  DL: {dist.dl_number}
+                                </span>
+                              )}
+                              {dist?.address && (
+                                <span className="text-slate-400 truncate max-w-xs">
+                                  {dist.address}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Fast Group Order Actions */}
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => handleCopyGroupPOText(dist, group.items)}
+                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium shadow-2xs transition-colors flex items-center gap-1"
+                            title="Copy formatted purchase order text to clipboard"
+                          >
+                            {copiedId === (dist?.id || 'unassigned') ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                <span className="text-emerald-700 font-semibold">Copied!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5 text-slate-500" />
+                                <span>Copy PO</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            onClick={() => setShowWhatsAppPreviewModal({ distributor: dist, items: group.items, text: api.generateWhatsAppPOText({ storeProfile, distributor: dist, items: group.items }) })}
+                            className="px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-xs font-semibold shadow-2xs transition-colors flex items-center gap-1"
+                            title="Preview formatted WhatsApp Purchase Order"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Preview</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleSendGroupWhatsAppPO(dist, group.items)}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5"
+                            title="Open WhatsApp with structured purchase order message"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>Send WhatsApp PO</span>
+                          </button>
+
+                          {!isUnassigned && (
+                            <button
+                              onClick={() => handleConvertGroupToInward(dist, group.items)}
+                              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5"
+                              title="Pre-fill Wholesale Inward bill modal with these ordered items"
+                            >
+                              <ShoppingCart className="w-3.5 h-3.5" />
+                              <span>Convert to Inward Bill</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Line Items Table */}
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="bg-slate-50/50 text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200/80 font-semibold">
+                            <th className="py-2 px-3.5 w-10 text-center">#</th>
+                            <th className="py-2 px-3.5 min-w-[200px]">Medicine Name & Salt</th>
+                            <th className="py-2 px-3.5 w-28 text-center">Current Stock</th>
+                            <th className="py-2 px-3.5 w-36 text-center">Order Qty (Strips)</th>
+                            <th className="py-2 px-3.5 w-32">Source / Trigger</th>
+                            <th className="py-2 px-3.5 min-w-[140px]">Notes</th>
+                            <th className="py-2 px-3.5 w-24 text-center">Status</th>
+                            <th className="py-2 px-3.5 w-24 text-center">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {group.items.map((item, idx) => {
+                            const isCriticalZero = (item.current_stock ?? 0) <= 0;
+                            return (
+                              <tr key={item.id} className="hover:bg-slate-50/70 transition-colors">
+                                <td className="py-2.5 px-3.5 text-center text-slate-400 font-mono text-[10px]">
+                                  {idx + 1}
+                                </td>
+                                <td className="py-2.5 px-3.5">
+                                  <div className="font-bold text-slate-900 text-xs">{item.medicine_name}</div>
+                                  {item.generic_salt && (
+                                    <div className="text-[10px] text-slate-500 font-normal truncate max-w-md">
+                                      {item.generic_salt}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3.5 text-center">
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold ${
+                                    isCriticalZero
+                                      ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                      : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                  }`}>
+                                    {item.current_stock ?? 0} strips
+                                  </span>
+                                  <div className="text-[9px] text-slate-400 font-mono mt-0.5">
+                                    Min alert: {item.min_stock_alert ?? 10}
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3.5 text-center">
+                                  <div className="inline-flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs">
+                                    <button
+                                      onClick={() => handleUpdateShortageQty(item.id, -5)}
+                                      className="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold text-xs"
+                                      title="-5 strips"
+                                    >
+                                      -
+                                    </button>
+                                    <span className="px-2.5 py-1 text-xs font-bold font-mono text-slate-900 min-w-[36px] text-center bg-slate-50">
+                                      {item.suggested_qty || 10}
+                                    </span>
+                                    <button
+                                      onClick={() => handleUpdateShortageQty(item.id, 5)}
+                                      className="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold text-xs"
+                                      title="+5 strips"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3.5">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                                    item.source === 'CUSTOMER_DEMAND'
+                                      ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                      : item.source === 'AUTO_STOCK_ALERT'
+                                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                      : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                  }`}>
+                                    {item.source === 'CUSTOMER_DEMAND'
+                                      ? 'ग्राहक मागणी'
+                                      : item.source === 'AUTO_STOCK_ALERT'
+                                      ? 'Auto Alert'
+                                      : 'Counter Manual'}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3.5 text-[11px] text-slate-500">
+                                  {item.notes || '—'}
+                                </td>
+                                <td className="py-2.5 px-3.5 text-center font-sans">
+                                  <button
+                                    onClick={() => handleToggleOrderStatus(item)}
+                                    className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded transition-all ${
+                                      item.status === 'ORDERED'
+                                        ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                                        : 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200'
+                                    }`}
+                                    title="Click to toggle status"
+                                  >
+                                    {item.status === 'ORDERED' ? 'ऑर्डर दिली' : 'ऑर्डर देणे बाकी'}
+                                  </button>
+                                </td>
+                                <td className="py-2.5 px-3.5 text-center space-x-1 whitespace-nowrap">
+                                  <button
+                                    onClick={() => handleDeleteShortage(item.id)}
+                                    className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                                    title="Delete from shortage register"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              /* Flat List / Table View */
+              <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50/80 text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 font-semibold">
+                      <th className="py-2.5 px-3.5 w-10 text-center">#</th>
+                      <th className="py-2.5 px-3.5 min-w-[200px]">Medicine Name & Salt</th>
+                      <th className="py-2.5 px-3.5 w-32">Distributor / Stockist</th>
+                      <th className="py-2.5 px-3.5 w-28 text-center">Current Stock</th>
+                      <th className="py-2.5 px-3.5 w-32 text-center">Order Qty</th>
+                      <th className="py-2.5 px-3.5 w-28">Source</th>
+                      <th className="py-2.5 px-3.5 min-w-[140px]">Notes</th>
+                      <th className="py-2.5 px-3.5 w-24 text-center">Status</th>
+                      <th className="py-2.5 px-3.5 w-20 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredShortageItems.map((item, idx) => (
+                      <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="py-2.5 px-3.5 text-center text-slate-400 font-mono text-[10px]">{idx + 1}</td>
+                        <td className="py-2.5 px-3.5">
+                          <div className="font-bold text-slate-900">{item.medicine_name}</div>
+                          {item.generic_salt && (
+                            <div className="text-[10px] text-slate-500 truncate max-w-sm">{item.generic_salt}</div>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3.5 font-medium text-slate-800">
+                          {item.dist_name || 'Unassigned'}
+                        </td>
+                        <td className="py-2.5 px-3.5 text-center">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded font-mono font-bold text-[11px] ${
+                            (item.current_stock ?? 0) <= 0
+                              ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                              : 'bg-amber-100 text-amber-800 border border-amber-200'
+                          }`}>
+                            {item.current_stock ?? 0}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3.5 text-center">
+                          <div className="inline-flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs">
+                            <button
+                              onClick={() => handleUpdateShortageQty(item.id, -5)}
+                              className="px-2 py-0.5 text-slate-600 hover:bg-slate-100 font-bold"
+                            >
+                              -
+                            </button>
+                            <span className="px-2 py-0.5 text-xs font-bold font-mono text-slate-900 min-w-[32px] text-center bg-slate-50">
+                              {item.suggested_qty || 10}
+                            </span>
+                            <button
+                              onClick={() => handleUpdateShortageQty(item.id, 5)}
+                              className="px-2 py-0.5 text-slate-600 hover:bg-slate-100 font-bold"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3.5">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-slate-100 text-slate-700">
+                            {item.source}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3.5 text-slate-500 text-[11px]">{item.notes || '—'}</td>
+                        <td className="py-2.5 px-3.5 text-center">
+                          <button
+                            onClick={() => handleToggleOrderStatus(item)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              item.status === 'ORDERED'
+                                ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                                : 'bg-amber-100 text-amber-900 border border-amber-300'
+                            }`}
+                          >
+                            {item.status}
+                          </button>
+                        </td>
+                        <td className="py-2.5 px-3.5 text-center">
+                          <button
+                            onClick={() => handleDeleteShortage(item.id)}
+                            className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -2118,6 +2821,266 @@ Generated via GaavPharma Pharmacy ERP`;
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* MODAL: Add New Shortage Item ("तोटा वही नोंद") */}
+      {showAddShortageModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-500 text-slate-900 flex items-center justify-center font-bold">
+                  <BookOpen className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm">तोटा नोंदवहीत नवीन औषध जोडा (Add to Shortage Diary)</h3>
+                  <p className="text-[10px] text-slate-400">Log low stock medicines or walk-in customer demand for purchase ordering</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAddShortageModal(false)}
+                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveNewShortageItem} className="p-4 space-y-3.5">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Medicine Brand / Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Dolo 650, Augmentin 625 Duo, Azithral..."
+                  value={newShortageForm.medicine_name}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const matched = products.find(p => p.name.toLowerCase() === val.toLowerCase());
+                    setNewShortageForm(prev => ({
+                      ...prev,
+                      medicine_name: val,
+                      product_id: matched ? String(matched.id) : prev.product_id,
+                      generic_salt: matched ? (matched.generic_salt || '') : prev.generic_salt,
+                      current_stock: matched ? (matched.total_stock || 0) : prev.current_stock
+                    }));
+                  }}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:border-amber-500"
+                />
+                {/* Catalog Quick Pick */}
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  <span className="text-[10px] text-slate-400 self-center">Quick pick from catalog:</span>
+                  {products.slice(0, 4).map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setNewShortageForm(prev => ({
+                          ...prev,
+                          product_id: String(p.id),
+                          medicine_name: p.name,
+                          generic_salt: p.generic_salt || '',
+                          current_stock: p.total_stock || 0,
+                          min_stock_alert: p.min_stock_alert || 10
+                        }));
+                      }}
+                      className="px-1.5 py-0.5 rounded bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-900 text-[10px] font-medium transition-colors"
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Generic Composition / Salt (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Paracetamol 650mg"
+                  value={newShortageForm.generic_salt}
+                  onChange={(e) => setNewShortageForm({ ...newShortageForm, generic_salt: e.target.value })}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Re-order Strips / Qty *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={newShortageForm.suggested_qty}
+                    onChange={(e) => setNewShortageForm({ ...newShortageForm, suggested_qty: parseInt(e.target.value, 10) || 1 })}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Current Stock
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newShortageForm.current_stock}
+                    onChange={(e) => setNewShortageForm({ ...newShortageForm, current_stock: parseInt(e.target.value, 10) || 0 })}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono text-slate-700"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Assigned Stockist / Wholesaler (Optional)
+                </label>
+                <select
+                  value={newShortageForm.distributor_id}
+                  onChange={(e) => setNewShortageForm({ ...newShortageForm, distributor_id: e.target.value })}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900"
+                >
+                  <option value="">Unassigned (सप्लायर नंतर ठरवा)</option>
+                  {distributors.map(d => (
+                    <option key={d.id} value={String(d.id)}>{d.name} ({d.phone || 'No phone'})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Demand Source
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'CUSTOMER_DEMAND', label: 'ग्राहक मागणी (Customer)' },
+                    { id: 'AUTO_STOCK_ALERT', label: 'Low Stock Alert' },
+                    { id: 'COUNTER_MANUAL', label: 'Counter Manual' }
+                  ].map(src => (
+                    <button
+                      key={src.id}
+                      type="button"
+                      onClick={() => setNewShortageForm({ ...newShortageForm, source: src.id })}
+                      className={`p-2 rounded-lg border text-center text-[11px] font-semibold transition-all ${
+                        newShortageForm.source === src.id
+                          ? 'border-amber-500 bg-amber-50 text-amber-900'
+                          : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {src.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Notes / Customer Info</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Dr. S. K. Joshi prescription, Baburao asked for 2 strips..."
+                  value={newShortageForm.notes}
+                  onChange={(e) => setNewShortageForm({ ...newShortageForm, notes: e.target.value })}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end space-x-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowAddShortageModal(false)}
+                  className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Save to Diary (तोटा वहीत नोंदवा)</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: WhatsApp Purchase Order Preview */}
+      {showWhatsAppPreviewModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden">
+            <div className="p-4 bg-emerald-800 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold">
+                  <MessageSquare className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm">WhatsApp Purchase Order Preview (खरेदी ऑर्डर)</h3>
+                  <p className="text-[10px] text-emerald-200">To: {showWhatsAppPreviewModal.distributor?.name || 'Stockist'}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowWhatsAppPreviewModal(null)}
+                className="w-7 h-7 rounded-lg bg-emerald-900 hover:bg-emerald-700 text-white flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 bg-slate-100/70">
+              <div className="bg-emerald-50/80 border border-emerald-200/80 rounded-xl p-3.5 text-xs font-mono text-slate-800 whitespace-pre-wrap leading-relaxed shadow-2xs">
+                {showWhatsAppPreviewModal.text}
+              </div>
+            </div>
+
+            <div className="p-3 bg-white border-t border-slate-200 flex items-center justify-between">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(showWhatsAppPreviewModal.text);
+                  setShortageToast('खरेदी ऑर्डर क्लिपबोर्डवर कॉपी केली!');
+                  setTimeout(() => setShortageToast(null), 3000);
+                }}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium flex items-center gap-1.5"
+              >
+                <Copy className="w-3.5 h-3.5 text-slate-500" />
+                <span>Copy Order Text</span>
+              </button>
+
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setShowWhatsAppPreviewModal(null)}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-medium"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => {
+                    handleSendGroupWhatsAppPO(showWhatsAppPreviewModal.distributor, showWhatsAppPreviewModal.items);
+                    setShowWhatsAppPreviewModal(null);
+                  }}
+                  className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Send via WhatsApp</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Shortage Toast */}
+      {shortageToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-amber-500/40 flex items-center space-x-2.5 animate-in slide-in-from-bottom duration-200">
+          <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+            <Check className="w-4 h-4" />
+          </div>
+          <span className="text-xs font-medium text-amber-200">{shortageToast}</span>
         </div>
       )}
     </div>

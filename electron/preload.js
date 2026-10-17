@@ -69,6 +69,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getScheduleH1Register: (filters) => ipcRenderer.invoke('db:getScheduleH1Register', filters),
   getGstTaxSummary: (period) => ipcRenderer.invoke('db:getGstTaxSummary', period),
 
+  // Shortage Diary & WhatsApp Purchase Orders ("तोटा नोंदवही")
+  syncAutoShortages: () => ipcRenderer.invoke('db:syncAutoShortages'),
+  getShortageDiary: (filters) => ipcRenderer.invoke('db:getShortageDiary', filters),
+  addShortageItem: (data) => ipcRenderer.invoke('db:addShortageItem', data),
+  updateShortageItem: (id, data) => ipcRenderer.invoke('db:updateShortageItem', id, data),
+  markShortageAsOrdered: (ids, distributorId) => ipcRenderer.invoke('db:markShortageAsOrdered', ids, distributorId),
+  deleteShortageItem: (id) => ipcRenderer.invoke('db:deleteShortageItem', id),
+
   // System Utilities
   openExternalUrl: (url) => ipcRenderer.invoke('sys:openExternalUrl', url),
   printReceipt: () => ipcRenderer.invoke('sys:printReceipt')

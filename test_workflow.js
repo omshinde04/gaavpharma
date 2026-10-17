@@ -502,16 +502,82 @@ async function runTestSuite() {
   assert(taxSummary.turnoverTracker.status === 'SAFE', 'Turnover tracker evaluates SAFE status for small chemist (< ₹40L)');
   assert(taxSummary.turnoverTracker.remainingAllowance === 4000000 - taxSummary.turnoverTracker.annualTurnover, 'Remaining tax-free turnover allowance computed correctly');
 
-  // 11.3 Verify complete data wipe with clearAllRecords
+  // 12. Auto-Shortage Diary & WhatsApp Purchase Orders ("तोटा नोंदवही" / Auto PO Generator)
+  console.log('\n📝 [TEST GROUP 12] Auto-Shortage Diary & WhatsApp Purchase Orders (तोटा नोंदवही)');
+  const syncResult = await api.syncAutoShortages();
+  assert(syncResult && syncResult.success === true, 'syncAutoShortages executed successfully');
+
+  const initialDiary = await api.getShortageDiary({ status: 'ALL' });
+  assert(Array.isArray(initialDiary), 'getShortageDiary returns active shortage entries array');
+  assert(initialDiary.length > 0, 'Auto-sync detected products with low stock (total_stock <= min_stock_alert)');
+
+  const firstShortage = initialDiary[0];
+  assert(firstShortage.status === 'PENDING' || firstShortage.status === 'ORDERED', 'Auto-shortage items default to PENDING status');
+  assert(firstShortage.suggested_qty > 0, 'Auto-shortage computes re-order strip quantity based on min_stock_alert');
+
+  // Manual Counter Shortage / Customer Demand Entry
+  const manualShortage = await api.addShortageItem({
+    medicine_name: 'Augmentin 625 Duo Strip',
+    generic_salt: 'Amoxicillin + Potassium Clavulanate',
+    current_stock: 0,
+    min_stock_alert: 10,
+    suggested_qty: 20,
+    distributor_id: 1,
+    distributor_name: 'Mahaveer Pharma Ghoti',
+    source: 'CUSTOMER_DEMAND',
+    notes: 'Walk-in customer demanded urgently at counter'
+  });
+  assert(manualShortage && manualShortage.medicine_name === 'Augmentin 625 Duo Strip', 'Manual counter shortage (तोटा नोंद) saved successfully');
+  assert(manualShortage.source === 'CUSTOMER_DEMAND', 'Shortage item flagged as CUSTOMER_DEMAND');
+  assert(manualShortage.status === 'PENDING', 'New shortage item created with PENDING status');
+
+  // Update Shortage Item
+  const updatedShortage = await api.updateShortageItem(manualShortage.id, {
+    suggested_qty: 30,
+    notes: 'Prescribed frequently by Dr. S. K. Joshi Ghoti'
+  });
+  assert(updatedShortage && updatedShortage.suggested_qty === 30, 'updateShortageItem updated suggested re-order qty to 30');
+  assert(updatedShortage.notes.includes('Dr. S. K. Joshi'), 'updateShortageItem updated notes');
+
+  // WhatsApp Purchase Order Text Generation
+  const poText = api.generateWhatsAppPOText({
+    storeProfile,
+    distributor: { name: 'Mahaveer Pharma Ghoti', phone: '9822012345' },
+    items: [updatedShortage]
+  });
+  assert(poText && poText.includes('नवीन खरेदी ऑर्डर (PURCHASE ORDER)'), 'WhatsApp PO generated with official Marathi header');
+  assert(poText.includes('Divya Medical Stores'), 'WhatsApp PO contains active Chemist Store Name');
+  assert(poText.includes('20B/21B-MH-SOL-194829'), 'WhatsApp PO embeds statutory Drug License Numbers');
+  assert(poText.includes('Augmentin 625 Duo Strip') && poText.includes('30 strips/packs'), 'WhatsApp PO details item name and suggested re-order quantities');
+
+  // Transition status to ORDERED
+  const orderResult = await api.markShortageAsOrdered([manualShortage.id], 1);
+  assert(orderResult && orderResult.success === true, 'markShortageAsOrdered marks shortage as ordered with distributor');
+  const diaryAfterOrder = await api.getShortageDiary({ status: 'ALL' });
+  const orderedItem = diaryAfterOrder.find(item => item.id === manualShortage.id);
+  assert(orderedItem && orderedItem.status === 'ORDERED', 'Shortage item status transitioned to ORDERED');
+  assert(orderedItem && orderedItem.ordered_at !== null, 'Shortage item timestamped with ordered_at');
+
+  // Filter verification
+  const pendingOnly = await api.getShortageDiary({ status: 'PENDING' });
+  assert(!pendingOnly.some(item => item.id === manualShortage.id), 'Status filter PENDING correctly excludes ORDERED items');
+
+  // Delete Shortage Item
+  const deleteResult = await api.deleteShortageItem(manualShortage.id);
+  assert(deleteResult && deleteResult.success === true, 'deleteShortageItem removes shortage item cleanly');
+
+  // 12.1 Verify complete data wipe with clearAllRecords
   console.log('\n🧹 [DATABASE INTEGRITY] Full Database Reset');
   await api.clearAllRecords();
   const debitNotesAfterClear = await api.getDebitNotes();
   const purchasesAfterClear = await api.getPurchases();
   const h1AfterClear = await api.getScheduleH1Register();
+  const shortageAfterClear = await api.getShortageDiary({ status: 'ALL' });
 
   assert(debitNotesAfterClear.length === 0, 'clearAllRecords wipes all debit notes from storage');
   assert(purchasesAfterClear.length === 0, 'clearAllRecords wipes all wholesale purchases from storage');
   assert(h1AfterClear.length === 0, 'clearAllRecords resets Schedule H1 register entries to zero');
+  assert(shortageAfterClear.length === 0, 'clearAllRecords wipes all shortage diary entries from storage');
 
   console.log('\n========================================================');
   console.log(`🏁 TEST RESULTS: ${passed} PASSED | ${failed} FAILED`);

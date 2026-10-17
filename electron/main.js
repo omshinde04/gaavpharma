@@ -130,6 +130,14 @@ function setupIpcHandlers() {
   ipcMain.handle('db:getScheduleH1Register', (_, filters) => db.getScheduleH1Register(filters));
   ipcMain.handle('db:getGstTaxSummary', (_, period) => db.getGstTaxSummary(period));
 
+  // Shortage Diary & WhatsApp Purchase Orders ("तोटा नोंदवही")
+  ipcMain.handle('db:syncAutoShortages', () => db.syncAutoShortages());
+  ipcMain.handle('db:getShortageDiary', (_, filters) => db.getShortageDiary(filters));
+  ipcMain.handle('db:addShortageItem', (_, data) => db.addShortageItem(data));
+  ipcMain.handle('db:updateShortageItem', (_, id, data) => db.updateShortageItem(id, data));
+  ipcMain.handle('db:markShortageAsOrdered', (_, ids, distributorId) => db.markShortageAsOrdered(ids, distributorId));
+  ipcMain.handle('db:deleteShortageItem', (_, id) => db.deleteShortageItem(id));
+
   // System Utilities
   ipcMain.handle('sys:openExternalUrl', async (_, url) => {
     if (url && (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('mailto:'))) {

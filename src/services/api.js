@@ -301,9 +301,9 @@ const INITIAL_PRODUCTS = [
     strip_size: 5,
     is_schedule_h1: 1,
     min_stock_alert: 10,
-    total_stock: 15,
+    total_stock: 4,
     batches: [
-      { id: 8, product_id: 5, batch_no: 'AZ3041', expiry_date: '12/26', purchase_rate: 78.00, mrp: 119.50, stock_qty: 15 }
+      { id: 8, product_id: 5, batch_no: 'AZ3041', expiry_date: '12/26', purchase_rate: 78.00, mrp: 119.50, stock_qty: 4 }
     ]
   },
   {
@@ -409,6 +409,50 @@ const loadFallbackProducts = () => {
   return JSON.parse(JSON.stringify(INITIAL_PRODUCTS));
 };
 
+const INITIAL_SHORTAGE_DIARY = [
+  {
+    id: 1,
+    product_id: 5,
+    medicine_name: 'Azithral 500 Tablet',
+    generic_salt: 'Azithromycin 500mg',
+    current_stock: 2,
+    min_stock_alert: 10,
+    suggested_qty: 15,
+    distributor_id: 1,
+    distributor_name: 'Mahaveer Pharma Ghoti',
+    status: 'PENDING',
+    source: 'AUTO_STOCK_ALERT',
+    notes: 'Low stock critical (2 left)',
+    created_at: new Date(Date.now() - 3600000).toISOString()
+  },
+  {
+    id: 2,
+    product_id: 3,
+    medicine_name: 'Telma 40 Tablet',
+    generic_salt: 'Telmisartan 40mg',
+    current_stock: 4,
+    min_stock_alert: 15,
+    suggested_qty: 20,
+    distributor_id: 2,
+    distributor_name: 'Arihant Agencies Nashik',
+    status: 'PENDING',
+    source: 'AUTO_STOCK_ALERT',
+    notes: 'Fast-moving BP tablet',
+    created_at: new Date(Date.now() - 7200000).toISOString()
+  }
+];
+
+const loadFallbackShortageDiary = () => {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('gaavpharma_shortage_diary') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  return JSON.parse(JSON.stringify(INITIAL_SHORTAGE_DIARY));
+};
+
 // In-memory fallback mock with localStorage persistence for web dev preview
 const fallbackStorage = {
   license: loadFallbackLicense(),
@@ -421,7 +465,8 @@ const fallbackStorage = {
   distributors: loadFallbackDistributors(),
   purchases: loadFallbackPurchases(),
   distributorLedger: loadFallbackDistributorLedger(),
-  debitNotes: loadFallbackDebitNotes()
+  debitNotes: loadFallbackDebitNotes(),
+  shortageDiary: loadFallbackShortageDiary()
 };
 
 export const api = {
@@ -1746,6 +1791,237 @@ export const api = {
     };
   },
 
+  // Shortage Diary & WhatsApp Purchase Orders ("तोटा नोंदवही")
+  syncAutoShortages: async () => {
+    if (isElectron) return window.electronAPI.syncAutoShortages();
+    let syncedCount = 0;
+    fallbackStorage.products.forEach(prod => {
+      const minStock = prod.min_stock_alert !== undefined ? prod.min_stock_alert : 10;
+      const totalStock = prod.total_stock !== undefined ? prod.total_stock : (
+        prod.batches ? prod.batches.reduce((sum, b) => sum + (b.stock_qty || 0), 0) : 0
+      );
+
+      if (totalStock <= minStock) {
+        const existing = fallbackStorage.shortageDiary.find(
+          s => s.product_id === prod.id && (s.status === 'PENDING' || s.status === 'ORDERED')
+        );
+
+        if (existing) {
+          existing.current_stock = totalStock;
+          existing.min_stock_alert = minStock;
+        } else {
+          // Find last distributor from purchases
+          let lastDist = null;
+          for (const p of fallbackStorage.purchases) {
+            if (p.items && p.items.some(it => it.product_id === prod.id)) {
+              const d = fallbackStorage.distributors.find(dist => dist.id === p.distributor_id);
+              if (d) {
+                lastDist = d;
+                break;
+              }
+            }
+          }
+          const suggested = Math.max(10, minStock * 2);
+          const newItem = {
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            product_id: prod.id,
+            medicine_name: prod.name,
+            generic_salt: prod.generic_salt || '',
+            current_stock: totalStock,
+            min_stock_alert: minStock,
+            suggested_qty: suggested,
+            distributor_id: lastDist ? lastDist.id : null,
+            distributor_name: lastDist ? lastDist.name : null,
+            status: 'PENDING',
+            source: 'AUTO_STOCK_ALERT',
+            notes: `Auto-detected low stock (${totalStock} <= ${minStock})`,
+            created_at: new Date().toISOString()
+          };
+          fallbackStorage.shortageDiary.unshift(newItem);
+          syncedCount++;
+        }
+      }
+    });
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_shortage_diary', JSON.stringify(fallbackStorage.shortageDiary));
+      } catch (e) {}
+    }
+    return { success: true, syncedCount };
+  },
+
+  getShortageDiary: async (filters = {}) => {
+    if (isElectron) return window.electronAPI.getShortageDiary(filters);
+    const { status, distributor_id, search } = filters;
+    let list = [...fallbackStorage.shortageDiary];
+
+    if (status && status !== 'ALL') {
+      list = list.filter(item => item.status === status);
+    }
+    if (distributor_id && distributor_id !== 'all') {
+      if (distributor_id === 'unassigned') {
+        list = list.filter(item => !item.distributor_id);
+      } else {
+        list = list.filter(item => Number(item.distributor_id) === Number(distributor_id));
+      }
+    }
+    if (search && search.trim()) {
+      const q = search.toLowerCase().trim();
+      list = list.filter(item =>
+        item.medicine_name?.toLowerCase().includes(q) ||
+        item.generic_salt?.toLowerCase().includes(q) ||
+        item.notes?.toLowerCase().includes(q) ||
+        item.distributor_name?.toLowerCase().includes(q)
+      );
+    }
+
+    const populated = list.map(item => {
+      const d = fallbackStorage.distributors.find(dist => dist.id === Number(item.distributor_id));
+      return {
+        ...item,
+        dist_name: item.distributor_name || (d ? d.name : null),
+        distributor_phone: d ? d.phone : '',
+        distributor_dl: d ? d.dl_number : ''
+      };
+    });
+
+    populated.sort((a, b) => {
+      const orderA = a.status === 'PENDING' ? 1 : a.status === 'ORDERED' ? 2 : 3;
+      const orderB = b.status === 'PENDING' ? 1 : b.status === 'ORDERED' ? 2 : 3;
+      if (orderA !== orderB) return orderA - orderB;
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    });
+
+    return populated;
+  },
+
+  addShortageItem: async (itemData) => {
+    if (isElectron) return window.electronAPI.addShortageItem(itemData);
+    if (!itemData.medicine_name || !itemData.medicine_name.trim()) {
+      throw new Error('Medicine name is required for shortage entry');
+    }
+    const distId = itemData.distributor_id ? Number(itemData.distributor_id) : null;
+    let distName = itemData.distributor_name || null;
+    let distPhone = '';
+    let distDl = '';
+    if (distId) {
+      const d = fallbackStorage.distributors.find(dist => dist.id === distId);
+      if (d) {
+        distName = d.name;
+        distPhone = d.phone;
+        distDl = d.dl_number;
+      }
+    }
+
+    const newItem = {
+      id: Date.now(),
+      product_id: itemData.product_id ? Number(itemData.product_id) : null,
+      medicine_name: itemData.medicine_name.trim(),
+      generic_salt: itemData.generic_salt || '',
+      current_stock: parseInt(itemData.current_stock, 10) || 0,
+      min_stock_alert: parseInt(itemData.min_stock_alert, 10) || 10,
+      suggested_qty: parseInt(itemData.suggested_qty, 10) || 10,
+      distributor_id: distId,
+      distributor_name: distName,
+      status: 'PENDING',
+      source: itemData.source || 'COUNTER_MANUAL',
+      notes: itemData.notes || '',
+      created_at: new Date().toISOString(),
+      dist_name: distName,
+      distributor_phone: distPhone,
+      distributor_dl: distDl
+    };
+
+    fallbackStorage.shortageDiary.unshift(newItem);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_shortage_diary', JSON.stringify(fallbackStorage.shortageDiary));
+      } catch (e) {}
+    }
+    return newItem;
+  },
+
+  updateShortageItem: async (id, updateData) => {
+    if (isElectron) return window.electronAPI.updateShortageItem(id, updateData);
+    const item = fallbackStorage.shortageDiary.find(s => s.id === Number(id));
+    if (!item) throw new Error(`Shortage item #${id} not found`);
+
+    if (updateData.suggested_qty !== undefined) {
+      item.suggested_qty = parseInt(updateData.suggested_qty, 10) || 10;
+    }
+    if (updateData.distributor_id !== undefined) {
+      const distId = updateData.distributor_id ? Number(updateData.distributor_id) : null;
+      item.distributor_id = distId;
+      if (distId) {
+        const d = fallbackStorage.distributors.find(dist => dist.id === distId);
+        item.distributor_name = d ? d.name : (updateData.distributor_name || null);
+      } else {
+        item.distributor_name = null;
+      }
+    }
+    if (updateData.notes !== undefined) {
+      item.notes = updateData.notes;
+    }
+    if (updateData.status !== undefined) {
+      item.status = updateData.status;
+      if (updateData.status === 'ORDERED' && !item.ordered_at) {
+        item.ordered_at = new Date().toISOString();
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_shortage_diary', JSON.stringify(fallbackStorage.shortageDiary));
+      } catch (e) {}
+    }
+    return item;
+  },
+
+  markShortageAsOrdered: async (ids, distributorId) => {
+    if (isElectron) return window.electronAPI.markShortageAsOrdered(ids, distributorId);
+    if (!Array.isArray(ids)) ids = [ids];
+    let dist = null;
+    if (distributorId) {
+      dist = fallbackStorage.distributors.find(d => d.id === Number(distributorId));
+    }
+    const numIds = ids.map(Number);
+    let count = 0;
+    fallbackStorage.shortageDiary.forEach(item => {
+      if (numIds.includes(item.id)) {
+        item.status = 'ORDERED';
+        item.ordered_at = new Date().toISOString();
+        if (distributorId) {
+          item.distributor_id = Number(distributorId);
+          item.distributor_name = dist ? dist.name : item.distributor_name;
+        }
+        count++;
+      }
+    });
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_shortage_diary', JSON.stringify(fallbackStorage.shortageDiary));
+      } catch (e) {}
+    }
+    return { success: true, count };
+  },
+
+  deleteShortageItem: async (id) => {
+    if (isElectron) return window.electronAPI.deleteShortageItem(id);
+    fallbackStorage.shortageDiary = fallbackStorage.shortageDiary.filter(s => s.id !== Number(id));
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_shortage_diary', JSON.stringify(fallbackStorage.shortageDiary));
+      } catch (e) {}
+    }
+    return { success: true };
+  },
+
+  generateWhatsAppPOText: ({ storeProfile, distributor, items }) => {
+    return generateWhatsAppPOText({ storeProfile, distributor, items });
+  },
+
   // Clear All Records / Reset Ledger
   clearAllRecords: async () => {
     if (isElectron) return window.electronAPI.clearAllRecords();
@@ -1754,6 +2030,7 @@ export const api = {
     fallbackStorage.purchases = [];
     fallbackStorage.debitNotes = [];
     fallbackStorage.distributorLedger = [];
+    fallbackStorage.shortageDiary = [];
     fallbackStorage.distributors.forEach(d => { d.pending_balance = 0; });
 
     if (typeof window !== 'undefined') {
@@ -1763,6 +2040,7 @@ export const api = {
         localStorage.setItem('gaavpharma_purchases', JSON.stringify([]));
         localStorage.setItem('gaavpharma_debit_notes', JSON.stringify([]));
         localStorage.setItem('gaavpharma_distributor_ledger', JSON.stringify([]));
+        localStorage.setItem('gaavpharma_shortage_diary', JSON.stringify([]));
         localStorage.setItem('gaavpharma_distributors', JSON.stringify(fallbackStorage.distributors));
       } catch (e) {}
     }
@@ -1782,3 +2060,38 @@ export const api = {
     return Promise.resolve(true);
   }
 };
+
+export function generateWhatsAppPOText({ storeProfile, distributor, items }) {
+  const storeName = storeProfile?.store_name || 'Divya Medical Stores';
+  const phone = storeProfile?.phone || '9373545169';
+  const dl = storeProfile?.dl_number || '20B/21B-MH-SOL-194829';
+  const address = storeProfile?.address || 'Main Market, Ghoti';
+  const distName = distributor?.name || 'Stockist / Wholesaler';
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+
+  let text = `📦 *नवीन खरेदी ऑर्डर (PURCHASE ORDER)*\n`;
+  text += `प्रति, *${distName}*\n\n`;
+  text += `🏪 *${storeName}*\n`;
+  text += `📍 ${address}\n`;
+  text += `📞 मो. ${phone} | DL: ${dl}\n`;
+  text += `📅 तारीख: ${dateStr} ${timeStr}\n`;
+  text += `------------------------------------\n`;
+  text += `सप्रेम नमस्कार,\nकृपया खालील औषधांची ऑर्डर त्वरित पाठवून द्यावी:\n\n`;
+
+  (items || []).forEach((item, index) => {
+    const qty = item.suggested_qty || 10;
+    const stock = item.current_stock ?? 0;
+    const salt = item.generic_salt ? ` (${item.generic_salt})` : '';
+    const note = item.notes ? ` [टीप: ${item.notes}]` : '';
+    text += `${index + 1}. *${item.medicine_name}*${salt} - *${qty} strips/packs* (शिल्लक: ${stock})${note}\n`;
+  });
+
+  text += `------------------------------------\n`;
+  text += `एकूण आयटम्स: ${(items || []).length}\n`;
+  text += `कृपया बिल व डिलिव्हरी पाठवावी. धन्यवाद! 🙏`;
+
+  return text;
+}

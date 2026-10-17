@@ -263,11 +263,30 @@ function createTables() {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS shortage_diary (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+      medicine_name TEXT NOT NULL,
+      generic_salt TEXT,
+      current_stock INTEGER DEFAULT 0,
+      min_stock_alert INTEGER DEFAULT 10,
+      suggested_qty INTEGER DEFAULT 10,
+      distributor_id INTEGER REFERENCES distributors(id) ON DELETE SET NULL,
+      distributor_name TEXT,
+      status TEXT CHECK(status IN ('PENDING', 'ORDERED', 'INWARDED')) DEFAULT 'PENDING',
+      source TEXT CHECK(source IN ('AUTO_STOCK_ALERT', 'COUNTER_MANUAL', 'CUSTOMER_DEMAND')) DEFAULT 'AUTO_STOCK_ALERT',
+      notes TEXT,
+      ordered_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
     CREATE INDEX IF NOT EXISTS idx_products_salt ON products(generic_salt);
     CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
     CREATE INDEX IF NOT EXISTS idx_batches_product_id ON batches(product_id);
     CREATE INDEX IF NOT EXISTS idx_invoices_created ON invoices(created_at);
+    CREATE INDEX IF NOT EXISTS idx_shortage_status ON shortage_diary(status);
+    CREATE INDEX IF NOT EXISTS idx_shortage_distributor ON shortage_diary(distributor_id);
   `);
 
   // Auto-migrate any legacy store names
@@ -308,6 +327,29 @@ function createTables() {
     if (!itemCols.some(c => c.name === 'gst_rate')) {
       db.exec("ALTER TABLE invoice_items ADD COLUMN gst_rate REAL DEFAULT 12;");
     }
+  } catch (e) {}
+
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS shortage_diary (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+        medicine_name TEXT NOT NULL,
+        generic_salt TEXT,
+        current_stock INTEGER DEFAULT 0,
+        min_stock_alert INTEGER DEFAULT 10,
+        suggested_qty INTEGER DEFAULT 10,
+        distributor_id INTEGER REFERENCES distributors(id) ON DELETE SET NULL,
+        distributor_name TEXT,
+        status TEXT CHECK(status IN ('PENDING', 'ORDERED', 'INWARDED')) DEFAULT 'PENDING',
+        source TEXT CHECK(source IN ('AUTO_STOCK_ALERT', 'COUNTER_MANUAL', 'CUSTOMER_DEMAND')) DEFAULT 'AUTO_STOCK_ALERT',
+        notes TEXT,
+        ordered_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_shortage_status ON shortage_diary(status);
+      CREATE INDEX IF NOT EXISTS idx_shortage_distributor ON shortage_diary(distributor_id);
+    `);
   } catch (e) {}
 }
 
@@ -2149,6 +2191,244 @@ function getGstTaxSummary(period = {}) {
   };
 }
 
+function syncAutoShortages() {
+  if (!db) initDatabase();
+  const prods = db.prepare(`
+    SELECT 
+      p.id, 
+      p.name, 
+      p.generic_salt, 
+      COALESCE(p.min_stock_alert, 10) as min_stock_alert,
+      COALESCE((SELECT SUM(stock_qty) FROM batches WHERE product_id = p.id), 0) as total_stock
+    FROM products p
+  `).all();
+
+  let syncedCount = 0;
+  const stmtCheck = db.prepare(`
+    SELECT id, status FROM shortage_diary 
+    WHERE product_id = ? AND status IN ('PENDING', 'ORDERED')
+    ORDER BY id DESC LIMIT 1
+  `);
+  const stmtUpdateStock = db.prepare(`
+    UPDATE shortage_diary SET current_stock = ?, min_stock_alert = ? WHERE id = ?
+  `);
+  const stmtFindDist = db.prepare(`
+    SELECT p.distributor_id, d.name as distributor_name
+    FROM purchase_items pi
+    JOIN purchases p ON pi.purchase_id = p.id
+    JOIN distributors d ON p.distributor_id = d.id
+    WHERE pi.product_id = ?
+    ORDER BY p.id DESC
+    LIMIT 1
+  `);
+  const stmtInsert = db.prepare(`
+    INSERT INTO shortage_diary (
+      product_id, medicine_name, generic_salt, current_stock, min_stock_alert,
+      suggested_qty, distributor_id, distributor_name, status, source, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'AUTO_STOCK_ALERT', ?)
+  `);
+
+  for (const prod of prods) {
+    if (prod.total_stock <= prod.min_stock_alert) {
+      const existing = stmtCheck.get(prod.id);
+      if (existing) {
+        stmtUpdateStock.run(prod.total_stock, prod.min_stock_alert, existing.id);
+      } else {
+        const lastDist = stmtFindDist.get(prod.id);
+        const suggested = Math.max(10, (prod.min_stock_alert || 5) * 2);
+        stmtInsert.run(
+          prod.id,
+          prod.name,
+          prod.generic_salt || '',
+          prod.total_stock,
+          prod.min_stock_alert,
+          suggested,
+          lastDist ? lastDist.distributor_id : null,
+          lastDist ? lastDist.distributor_name : null,
+          `Auto-detected low stock (${prod.total_stock} <= ${prod.min_stock_alert})`
+        );
+        syncedCount++;
+      }
+    }
+  }
+  return { success: true, syncedCount };
+}
+
+function getShortageDiary(filters = {}) {
+  if (!db) initDatabase();
+  const { status, distributor_id, search } = filters;
+  let sql = `
+    SELECT 
+      s.*,
+      COALESCE(s.distributor_name, d.name) as dist_name,
+      d.phone as distributor_phone,
+      d.dl_number as distributor_dl
+    FROM shortage_diary s
+    LEFT JOIN distributors d ON s.distributor_id = d.id
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (status && status !== 'ALL') {
+    sql += ` AND s.status = ?`;
+    params.push(status);
+  }
+  if (distributor_id && distributor_id !== 'all') {
+    if (distributor_id === 'unassigned') {
+      sql += ` AND s.distributor_id IS NULL`;
+    } else {
+      sql += ` AND s.distributor_id = ?`;
+      params.push(Number(distributor_id));
+    }
+  }
+  if (search && search.trim()) {
+    const q = `%${search.trim()}%`;
+    sql += ` AND (s.medicine_name LIKE ? OR s.generic_salt LIKE ? OR s.notes LIKE ? OR s.distributor_name LIKE ? OR d.name LIKE ?)`;
+    params.push(q, q, q, q, q);
+  }
+
+  sql += ` ORDER BY 
+    CASE s.status 
+      WHEN 'PENDING' THEN 1 
+      WHEN 'ORDERED' THEN 2 
+      ELSE 3 
+    END,
+    s.created_at DESC`;
+
+  return db.prepare(sql).all(...params);
+}
+
+function addShortageItem(itemData) {
+  if (!db) initDatabase();
+  if (!itemData.medicine_name || !itemData.medicine_name.trim()) {
+    throw new Error('Medicine name is required for shortage entry');
+  }
+  const medicineName = itemData.medicine_name.trim();
+  const genericSalt = itemData.generic_salt || '';
+  const currentStock = parseInt(itemData.current_stock, 10) || 0;
+  const minStock = parseInt(itemData.min_stock_alert, 10) || 10;
+  const suggestedQty = parseInt(itemData.suggested_qty, 10) || 10;
+  const distributorId = itemData.distributor_id ? Number(itemData.distributor_id) : null;
+  let distributorName = itemData.distributor_name || null;
+  if (distributorId && !distributorName) {
+    const d = db.prepare(`SELECT name FROM distributors WHERE id = ?`).get(distributorId);
+    if (d) distributorName = d.name;
+  }
+  const source = itemData.source || 'COUNTER_MANUAL';
+  const notes = itemData.notes || '';
+  const productId = itemData.product_id ? Number(itemData.product_id) : null;
+
+  const res = db.prepare(`
+    INSERT INTO shortage_diary (
+      product_id, medicine_name, generic_salt, current_stock, min_stock_alert,
+      suggested_qty, distributor_id, distributor_name, status, source, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+  `).run(
+    productId,
+    medicineName,
+    genericSalt,
+    currentStock,
+    minStock,
+    suggestedQty,
+    distributorId,
+    distributorName,
+    source,
+    notes
+  );
+
+  return db.prepare(`
+    SELECT s.*, COALESCE(s.distributor_name, d.name) as dist_name, d.phone as distributor_phone, d.dl_number as distributor_dl
+    FROM shortage_diary s
+    LEFT JOIN distributors d ON s.distributor_id = d.id
+    WHERE s.id = ?
+  `).get(res.lastInsertRowid);
+}
+
+function updateShortageItem(id, updateData) {
+  if (!db) initDatabase();
+  const item = db.prepare(`SELECT * FROM shortage_diary WHERE id = ?`).get(id);
+  if (!item) throw new Error(`Shortage item #${id} not found`);
+
+  const fields = [];
+  const params = [];
+
+  if (updateData.suggested_qty !== undefined) {
+    fields.push('suggested_qty = ?');
+    params.push(parseInt(updateData.suggested_qty, 10) || 10);
+  }
+  if (updateData.distributor_id !== undefined) {
+    fields.push('distributor_id = ?');
+    const distId = updateData.distributor_id ? Number(updateData.distributor_id) : null;
+    params.push(distId);
+    if (distId) {
+      const d = db.prepare(`SELECT name FROM distributors WHERE id = ?`).get(distId);
+      fields.push('distributor_name = ?');
+      params.push(d ? d.name : (updateData.distributor_name || null));
+    } else {
+      fields.push('distributor_name = ?');
+      params.push(null);
+    }
+  }
+  if (updateData.notes !== undefined) {
+    fields.push('notes = ?');
+    params.push(updateData.notes);
+  }
+  if (updateData.status !== undefined) {
+    fields.push('status = ?');
+    params.push(updateData.status);
+    if (updateData.status === 'ORDERED' && !item.ordered_at) {
+      fields.push('ordered_at = CURRENT_TIMESTAMP');
+    }
+  }
+
+  if (fields.length > 0) {
+    params.push(id);
+    db.prepare(`UPDATE shortage_diary SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  return db.prepare(`
+    SELECT s.*, COALESCE(s.distributor_name, d.name) as dist_name, d.phone as distributor_phone, d.dl_number as distributor_dl
+    FROM shortage_diary s
+    LEFT JOIN distributors d ON s.distributor_id = d.id
+    WHERE s.id = ?
+  `).get(id);
+}
+
+function markShortageAsOrdered(ids, distributorId) {
+  if (!db) initDatabase();
+  if (!Array.isArray(ids)) ids = [ids];
+  if (ids.length === 0) return { success: true, count: 0 };
+
+  let distName = null;
+  if (distributorId) {
+    const d = db.prepare(`SELECT name FROM distributors WHERE id = ?`).get(distributorId);
+    if (d) distName = d.name;
+  }
+
+  const placeholders = ids.map(() => '?').join(',');
+  if (distributorId) {
+    db.prepare(`
+      UPDATE shortage_diary 
+      SET status = 'ORDERED', ordered_at = CURRENT_TIMESTAMP, distributor_id = ?, distributor_name = ?
+      WHERE id IN (${placeholders})
+    `).run(distributorId, distName, ...ids);
+  } else {
+    db.prepare(`
+      UPDATE shortage_diary 
+      SET status = 'ORDERED', ordered_at = CURRENT_TIMESTAMP
+      WHERE id IN (${placeholders})
+    `).run(...ids);
+  }
+
+  return { success: true, count: ids.length };
+}
+
+function deleteShortageItem(id) {
+  if (!db) initDatabase();
+  db.prepare(`DELETE FROM shortage_diary WHERE id = ?`).run(id);
+  return { success: true };
+}
+
 function clearAllRecords() {
   if (!db) initDatabase();
   db.prepare(`DELETE FROM invoice_items`).run();
@@ -2160,6 +2440,7 @@ function clearAllRecords() {
   db.prepare(`DELETE FROM purchase_items`).run();
   db.prepare(`DELETE FROM purchases`).run();
   db.prepare(`DELETE FROM distributor_ledger`).run();
+  db.prepare(`DELETE FROM shortage_diary`).run();
   db.prepare(`UPDATE distributors SET pending_balance = 0`).run();
   return { success: true };
 }
@@ -2215,5 +2496,11 @@ module.exports = {
   createDebitNote,
   getScheduleH1Register,
   getGstTaxSummary,
+  syncAutoShortages,
+  getShortageDiary,
+  addShortageItem,
+  updateShortageItem,
+  markShortageAsOrdered,
+  deleteShortageItem,
   clearAllRecords
 };

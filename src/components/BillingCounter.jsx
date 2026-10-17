@@ -66,6 +66,7 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     }
   });
   const [showHeldModal, setShowHeldModal] = useState(false);
+  const [shortageToast, setShortageToast] = useState(null);
 
   // Receipt Modal
   const [completedInvoice, setCompletedInvoice] = useState(null);
@@ -248,6 +249,29 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     setSearchQuery('');
     setSearchResults([]);
     searchInputRef.current?.focus();
+  };
+
+  const handleQuickAddShortage = async (product) => {
+    try {
+      const medicineName = product.name || product.medicine_name || searchQuery.trim();
+      if (!medicineName) return;
+      await api.addShortageItem({
+        product_id: product.id || null,
+        medicine_name: medicineName,
+        generic_salt: product.generic_salt || '',
+        current_stock: product.total_stock || 0,
+        min_stock_alert: product.min_stock_alert || 10,
+        suggested_qty: 10,
+        source: 'CUSTOMER_DEMAND',
+        notes: 'Walk-in customer demanded at counter'
+      });
+      setShortageToast(`"${medicineName}" तोटा नोंदवहीत जोडले! (Added to Shortage Diary)`);
+      setTimeout(() => setShortageToast(null), 3500);
+      setSearchQuery('');
+      setSearchResults([]);
+    } catch (err) {
+      console.error('Error adding shortage item:', err);
+    }
   };
 
   const updateCartItemQty = (index, delta) => {
@@ -565,21 +589,59 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                         </button>
                       )}
 
-                      <button
-                        disabled={isOutOfStock}
-                        className={`px-3 py-1 rounded-md text-xs font-semibold flex items-center space-x-1 transition-colors ${
-                          isOutOfStock
-                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
-                        }`}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>{isOutOfStock ? 'Out of Stock' : 'Add Strip'}</span>
-                      </button>
+                      {isOutOfStock ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleQuickAddShortage(prod);
+                          }}
+                          className="px-2.5 py-1 rounded-md text-xs font-semibold flex items-center space-x-1 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 shadow-2xs transition-colors"
+                          title="ग्राहक मागणी / तोटा नोंदवहीत नोंदवा"
+                        >
+                          <BookMarked className="w-3.5 h-3.5 text-amber-600" />
+                          <span>+ तोटा नोंदवा</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => addItemToCart(prod, false)}
+                          className="px-3 py-1 rounded-md text-xs font-semibold flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add Strip</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Missing Medicine Quick Shortage Banner */}
+          {searchResults.length === 0 && searchQuery.trim().length > 1 && !isSearching && (
+            <div className="absolute left-0 right-0 mt-1.5 bg-white rounded-xl shadow-xl border border-amber-300 p-3 z-40 animate-in fade-in duration-100 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-1.5 bg-amber-100 text-amber-800 rounded-lg border border-amber-200">
+                  <AlertCircle className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-900">
+                    "{searchQuery}" नॉट इन स्टॉक / उपलब्ध नाही
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    Walk-in customer demanded this medicine? Log it to Shortage Diary (तोटा वही).
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleQuickAddShortage({ name: searchQuery.trim(), generic_salt: '', current_stock: 0 })}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition-colors"
+              >
+                <BookMarked className="w-3.5 h-3.5" />
+                <span>+ तोटा नोंदवा (Add to Shortage)</span>
+              </button>
             </div>
           )}
         </div>
@@ -1202,6 +1264,16 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
             handleNewSale();
           }}
         />
+      )}
+
+      {/* Shortage Quick Notification Toast */}
+      {shortageToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-amber-500/40 flex items-center space-x-2.5 animate-in slide-in-from-bottom duration-200">
+          <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+            <Check className="w-4 h-4" />
+          </div>
+          <span className="text-xs font-medium text-amber-200">{shortageToast}</span>
+        </div>
       )}
     </div>
   );
