@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 
-export default function StoreSettingsModal({ onClose, onProfileUpdated, onTogglesUpdated, onOpenLicenseModal }) {
+export default function StoreSettingsModal({ onClose, onProfileUpdated, onTogglesUpdated, onOpenLicenseModal, onUserUpdated }) {
   const [activeTab, setActiveTab] = useState('profile'); // 'profile' | 'toggles' | 'staff' | 'subscription'
   const [profile, setProfile] = useState({
     store_name: '',
@@ -160,6 +160,24 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
     } catch (err) {
       console.error(err);
       alert('Failed to update PIN.');
+    }
+  };
+
+  const handleEditName = async (user) => {
+    const newName = prompt(`Enter new full name for "${user.display_name}":`, user.display_name);
+    if (!newName || !newName.trim()) return;
+    const cleanName = newName.trim();
+    try {
+      await api.updateUser(user.id, { display_name: cleanName });
+      setUsers((prev) =>
+        prev.map((u) => (u.id === user.id ? { ...u, display_name: cleanName } : u))
+      );
+      if (onUserUpdated) {
+        onUserUpdated({ ...user, display_name: cleanName });
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update name.');
     }
   };
 
@@ -558,6 +576,14 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
                             className="text-[10px] text-emerald-700 hover:text-emerald-900 underline font-sans ml-1 font-semibold"
                           >
                             Change PIN
+                          </button>
+                          <span>•</span>
+                          <button
+                            type="button"
+                            onClick={() => handleEditName(u)}
+                            className="text-[10px] text-blue-700 hover:text-blue-900 underline font-sans font-semibold"
+                          >
+                            Edit Name
                           </button>
                         </div>
                       </div>

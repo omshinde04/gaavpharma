@@ -204,6 +204,13 @@ export default function App() {
           onClose={() => setShowStoreSettings(false)}
           onProfileUpdated={(updated) => setStoreProfile(updated)}
           onTogglesUpdated={(updated) => setFeatureToggles(updated)}
+          onUserUpdated={(updatedUser) => {
+            if (currentUser && currentUser.id === updatedUser.id) {
+              const merged = { ...currentUser, ...updatedUser };
+              setCurrentUser(merged);
+              localStorage.setItem('gaavpharma_active_user', JSON.stringify(merged));
+            }
+          }}
           onOpenLicenseModal={() => {
             setShowStoreSettings(false);
             setShowLicenseModal(true);
