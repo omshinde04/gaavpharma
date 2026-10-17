@@ -196,27 +196,6 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
     }
   };
 
-  const handleWipeAllExceptSuperAdmin = async () => {
-    if (
-      !confirm(
-        '⚠️ WIPE CONFIRMATION:\n\n' +
-        'This will delete all store owners and cashiers from the database.\n' +
-        'Only Super Admin (Om Shinde, PIN: 9999) will be kept.\n\n' +
-        'Do you want to proceed?'
-      )
-    ) {
-      return;
-    }
-    try {
-      const remaining = await api.resetUsersToSuperAdminOnly();
-      setUsers(remaining);
-      alert('✅ All accounts wiped. Only Super Admin (PIN: 9999) remains.');
-    } catch (err) {
-      console.error(err);
-      alert('Failed to wipe users.');
-    }
-  };
-
   const handleToggleUserStatus = (user) => {
     const nextStatus = user.is_active ? 0 : 1;
     setUsers((prev) =>
@@ -275,7 +254,7 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
             }`}
           >
             <Users className="w-3.5 h-3.5 text-blue-600" />
-            <span>Staff Management ({users.length})</span>
+            <span>Staff Management ({users.filter((u) => u.role !== 'super_admin').length})</span>
           </button>
           <button
             onClick={() => setActiveTab('subscription')}
@@ -549,44 +528,35 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <div>
-                  <h4 className="font-semibold text-slate-900">User & Staff Management</h4>
-                  <p className="text-[10px] text-slate-500">Manage Store Owner and Cashier PINs and access rights</p>
+                  <h4 className="font-semibold text-slate-900">Counter Staff & Cashiers</h4>
+                  <p className="text-[10px] text-slate-500">Manage 4-digit PINs and counter staff permissions</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleWipeAllExceptSuperAdmin}
-                    className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
-                    title="Delete all owners and cashiers, keeping only Super Admin"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Wipe to Super Admin Only</span>
-                  </button>
-                  <button
-                    onClick={() => setShowAddUser(true)}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Create User / Staff</span>
-                  </button>
-                </div>
+                <button
+                  onClick={() => setShowAddUser(true)}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Add Counter Staff</span>
+                </button>
               </div>
 
               <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
-                {users.map((u) => {
+                {users.filter((u) => u.role !== 'super_admin').map((u) => {
                   const isDuplicatePin = users.filter((x) => x.is_active && x.pin_code === u.pin_code).length > 1;
-                  const isProtected = u.role === 'super_admin';
+                  const isOwner = u.role === 'store_admin';
 
                   return (
                     <div key={u.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
                       <div>
                         <div className="font-semibold text-slate-900 flex items-center gap-2">
                           <span>{u.display_name}</span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 uppercase">
-                            {u.role}
+                          <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded uppercase ${
+                            isOwner ? 'bg-purple-50 text-purple-700 border border-purple-200 font-bold' : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            {isOwner ? 'STORE OWNER' : u.role}
                           </span>
                           {!u.is_active && (
-                            <span className="text-[10px] text-rose-700 bg-rose-50 px-1.5 py-0.2 rounded">
+                            <span className="text-[10px] text-rose-700 bg-rose-50 px-1.5 py-0.2 rounded font-semibold">
                               Deactivated
                             </span>
                           )}
@@ -621,27 +591,33 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
                       </div>
 
                       <div className="flex items-center space-x-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleUserStatus(u)}
-                          className={`px-2.5 py-1 rounded text-[11px] font-medium border ${
-                            u.is_active
-                              ? 'border-slate-200 text-slate-700 hover:bg-slate-100'
-                              : 'border-emerald-200 text-emerald-800 bg-emerald-50'
-                          }`}
-                        >
-                          {u.is_active ? 'Deactivate' : 'Activate'}
-                        </button>
+                        {!isOwner ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleUserStatus(u)}
+                              className={`px-2.5 py-1 rounded text-[11px] font-medium border ${
+                                u.is_active
+                                  ? 'border-slate-200 text-slate-700 hover:bg-slate-100'
+                                  : 'border-emerald-200 text-emerald-800 bg-emerald-50'
+                              }`}
+                            >
+                              {u.is_active ? 'Deactivate' : 'Activate'}
+                            </button>
 
-                        {!isProtected && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteUser(u)}
-                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors"
-                            title="Delete Staff Member"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteUser(u)}
+                              className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors"
+                              title="Delete Cashier Account"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 font-mono italic pr-2">
+                            Primary Account
+                          </span>
                         )}
                       </div>
                     </div>
