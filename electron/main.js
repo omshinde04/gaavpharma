@@ -77,6 +77,7 @@ function setupIpcHandlers() {
   ipcMain.handle('auth:addUser', (_, data) => db.addUser(data));
   ipcMain.handle('auth:updateUser', (_, id, data) => db.updateUser(id, data));
   ipcMain.handle('auth:deleteUser', (_, id) => db.deleteUser(id));
+  ipcMain.handle('auth:resetUsersToSuperAdminOnly', () => db.resetUsersToSuperAdminOnly());
 
   // Store Profile & Feature Toggles
   ipcMain.handle('cfg:getStoreProfile', () => db.getStoreProfile());

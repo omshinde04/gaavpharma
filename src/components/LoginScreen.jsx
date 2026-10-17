@@ -261,7 +261,7 @@ export default function LoginScreen({ onLoginSuccess, storeProfile, licenseStatu
               </button>
 
               <div className="text-[10px] text-slate-400 text-center pt-2">
-                Super Admin: <code>superadmin / admin123</code> • Store Owner: <code>anand_admin / owner123</code>
+                Super Admin Login: <code>superadmin / admin123</code> (PIN: <code>9999</code>)
               </div>
             </form>
           )}

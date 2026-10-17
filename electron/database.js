@@ -251,10 +251,6 @@ function seedInitialData() {
 
     // Super Admin (You - Software Provider)
     insertUser.run('superadmin', 'Om Shinde (Founder)', '9999', 'admin123', 'super_admin', 1);
-    // Store Owner (Buyer)
-    insertUser.run('anand_admin', 'Anand Patil (Owner)', '1111', 'owner123', 'store_admin', 1);
-    // Counter Cashier
-    insertUser.run('cashier1', 'Ramesh (Counter 1)', '1234', null, 'cashier', 1);
   }
 
   // 4. Seed Feature Toggles
@@ -735,8 +731,14 @@ function updateUser(id, userData) {
 
 function deleteUser(id) {
   if (!db) initDatabase();
-  db.prepare(`UPDATE users SET is_active = 0 WHERE id = ?`).run(id);
+  db.prepare(`DELETE FROM users WHERE id = ? AND role != 'super_admin'`).run(id);
   return { success: true };
+}
+
+function resetUsersToSuperAdminOnly() {
+  if (!db) initDatabase();
+  db.prepare(`DELETE FROM users WHERE role != 'super_admin'`).run();
+  return db.prepare(`SELECT id, username, display_name, pin_code, role, is_active FROM users`).all();
 }
 
 // ----------------- Store Profile & Feature Toggles -----------------
@@ -1250,6 +1252,7 @@ module.exports = {
   addUser,
   updateUser,
   deleteUser,
+  resetUsersToSuperAdminOnly,
   getStoreProfile,
   updateStoreProfile,
   getFeatureToggles,

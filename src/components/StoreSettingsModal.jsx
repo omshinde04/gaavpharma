@@ -182,17 +182,38 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
   };
 
   const handleDeleteUser = async (user) => {
-    if (user.role === 'super_admin' || user.role === 'store_admin') {
-      alert('Cannot delete Administrator accounts.');
+    if (user.role === 'super_admin') {
+      alert('Cannot delete the Founder / Super Administrator account.');
       return;
     }
-    if (!confirm(`Are you sure you want to remove staff member "${user.display_name}"?`)) return;
+    if (!confirm(`Are you sure you want to remove "${user.display_name}"?`)) return;
     try {
       await api.deleteUser(user.id);
       setUsers((prev) => prev.filter((u) => u.id !== user.id));
     } catch (err) {
       console.error(err);
-      alert('Failed to delete staff member.');
+      alert('Failed to delete user.');
+    }
+  };
+
+  const handleWipeAllExceptSuperAdmin = async () => {
+    if (
+      !confirm(
+        '⚠️ WIPE CONFIRMATION:\n\n' +
+        'This will delete all store owners and cashiers from the database.\n' +
+        'Only Super Admin (Om Shinde, PIN: 9999) will be kept.\n\n' +
+        'Do you want to proceed?'
+      )
+    ) {
+      return;
+    }
+    try {
+      const remaining = await api.resetUsersToSuperAdminOnly();
+      setUsers(remaining);
+      alert('✅ All accounts wiped. Only Super Admin (PIN: 9999) remains.');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to wipe users.');
     }
   };
 
@@ -528,22 +549,33 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <div>
-                  <h4 className="font-semibold text-slate-900">Counter Staff & Cashiers</h4>
-                  <p className="text-[10px] text-slate-500">Manage 4-digit PINs and staff access rights</p>
+                  <h4 className="font-semibold text-slate-900">User & Staff Management</h4>
+                  <p className="text-[10px] text-slate-500">Manage Store Owner and Cashier PINs and access rights</p>
                 </div>
-                <button
-                  onClick={() => setShowAddUser(true)}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add Counter Staff</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleWipeAllExceptSuperAdmin}
+                    className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                    title="Delete all owners and cashiers, keeping only Super Admin"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Wipe to Super Admin Only</span>
+                  </button>
+                  <button
+                    onClick={() => setShowAddUser(true)}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create User / Staff</span>
+                  </button>
+                </div>
               </div>
 
               <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
                 {users.map((u) => {
                   const isDuplicatePin = users.filter((x) => x.is_active && x.pin_code === u.pin_code).length > 1;
-                  const isProtected = u.role === 'super_admin' || u.role === 'store_admin';
+                  const isProtected = u.role === 'super_admin';
 
                   return (
                     <div key={u.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
@@ -620,14 +652,14 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
               {/* Add User Modal */}
               {showAddUser && (
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                  <div className="font-semibold text-slate-900 text-xs">Create New Counter Staff</div>
+                  <div className="font-semibold text-slate-900 text-xs">Create New Account (Store Owner / Counter Cashier)</div>
                   <form onSubmit={handleCreateUser} className="grid grid-cols-2 gap-2.5">
                     <div>
                       <label className="text-[10px] text-slate-500 block mb-0.5">Full Name</label>
                       <input
                         type="text"
                         required
-                        placeholder="e.g. Sagar Pawar"
+                        placeholder="e.g. Om Shinde (Owner) or Sagar"
                         value={newUserData.display_name}
                         onChange={(e) => setNewUserData({ ...newUserData, display_name: e.target.value })}
                         className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs"
@@ -638,33 +670,33 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
                       <input
                         type="text"
                         required
-                        placeholder="e.g. sagar_counter2"
+                        placeholder="e.g. om_owner or cashier1"
                         value={newUserData.username}
                         onChange={(e) => setNewUserData({ ...newUserData, username: e.target.value })}
                         className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs font-mono"
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] text-slate-500 block mb-0.5">4-Digit Counter PIN</label>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">4-Digit Login PIN</label>
                       <input
                         type="password"
                         maxLength="4"
                         required
-                        placeholder="e.g. 5566"
+                        placeholder="e.g. 1111"
                         value={newUserData.pin_code}
                         onChange={(e) => setNewUserData({ ...newUserData, pin_code: e.target.value })}
                         className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs font-mono text-center font-bold"
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] text-slate-500 block mb-0.5">Role</label>
+                      <label className="text-[10px] text-slate-500 block mb-0.5">Role Permission</label>
                       <select
                         value={newUserData.role}
                         onChange={(e) => setNewUserData({ ...newUserData, role: e.target.value })}
                         className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs"
                       >
-                        <option value="cashier">Counter Cashier</option>
-                        <option value="store_admin">Store Administrator</option>
+                        <option value="store_admin">Store Owner / Administrator (Full Store Control)</option>
+                        <option value="cashier">Counter Staff / Cashier (Billing Only)</option>
                       </select>
                     </div>
                     <div className="col-span-2 flex justify-end gap-2 pt-1">
@@ -679,7 +711,7 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
                         type="submit"
                         className="px-4 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold"
                       >
-                        Create Staff
+                        Create Account
                       </button>
                     </div>
                   </form>

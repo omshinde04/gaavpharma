@@ -33,9 +33,7 @@ const fallbackStorage = {
     auto_print: 0
   },
   users: [
-    { id: 1, username: 'superadmin', display_name: 'Om Shinde (Founder)', pin_code: '9999', role: 'super_admin', is_active: 1 },
-    { id: 2, username: 'anand_admin', display_name: 'Anand Patil (Owner)', pin_code: '1111', role: 'store_admin', is_active: 1 },
-    { id: 3, username: 'cashier1', display_name: 'Ramesh (Counter 1)', pin_code: '1234', role: 'cashier', is_active: 1 }
+    { id: 1, username: 'superadmin', display_name: 'Om Shinde (Founder)', pin_code: '9999', role: 'super_admin', is_active: 1 }
   ],
   featureToggles: {
     allow_khata: true,
@@ -321,14 +319,16 @@ export const api = {
   loginWithCredentials: async (username, password) => {
     if (isElectron) return window.electronAPI.loginWithCredentials(username, password);
     const u = username.toLowerCase().trim();
-    if (u === 'superadmin' && password === 'admin123') return fallbackStorage.users[0];
-    if (u === 'anand_admin' && password === 'owner123') return fallbackStorage.users[1];
+    const user = fallbackStorage.users.find(user => user.username.toLowerCase() === u && user.is_active);
+    if (!user) return null;
+    if (u === 'superadmin' && password === 'admin123') return user;
+    if (user.role === 'store_admin' && (password === 'owner123' || password === 'admin123')) return user;
     return null;
   },
 
   getUsers: async () => {
     if (isElectron) return window.electronAPI.getUsers();
-    return fallbackStorage.users;
+    return [...fallbackStorage.users];
   },
 
   addUser: async (userData) => {
@@ -351,9 +351,16 @@ export const api = {
 
   deleteUser: async (id) => {
     if (isElectron) return window.electronAPI.deleteUser(id);
-    const u = fallbackStorage.users.find(user => user.id === id);
-    if (u) u.is_active = 0;
+    fallbackStorage.users = fallbackStorage.users.filter(user => user.id !== id && user.role !== 'super_admin');
     return { success: true };
+  },
+
+  resetUsersToSuperAdminOnly: async () => {
+    if (isElectron) return window.electronAPI.resetUsersToSuperAdminOnly();
+    fallbackStorage.users = [
+      { id: 1, username: 'superadmin', display_name: 'Om Shinde (Founder)', pin_code: '9999', role: 'super_admin', is_active: 1 }
+    ];
+    return [...fallbackStorage.users];
   },
 
   // Store Profile & Feature Toggles

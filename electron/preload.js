@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addUser: (userData) => ipcRenderer.invoke('auth:addUser', userData),
   updateUser: (id, userData) => ipcRenderer.invoke('auth:updateUser', id, userData),
   deleteUser: (id) => ipcRenderer.invoke('auth:deleteUser', id),
+  resetUsersToSuperAdminOnly: () => ipcRenderer.invoke('auth:resetUsersToSuperAdminOnly'),
 
   // Store Profile & Feature Toggles
   getStoreProfile: () => ipcRenderer.invoke('cfg:getStoreProfile'),
