@@ -140,6 +140,70 @@ const loadFallbackFeatureToggles = () => {
   return { ...DEFAULT_FEATURE_TOGGLES };
 };
 
+const INITIAL_INVOICES = [
+  {
+    id: 1,
+    invoice_no: 'INV-20261016-001',
+    customer_name: 'Ganesh Kulkarni',
+    customer_mobile: '9822345678',
+    doctor_name: 'Dr. Joshi',
+    payment_mode: 'upi',
+    total_amount: 238.50,
+    discount: 0,
+    final_amount: 238.50,
+    created_at: '2026-10-16 17:00:00',
+    item_count: 2,
+    items: [
+      { id: 1, product_name: 'Dolo 650 Tablet', batch_no: 'DL3811', expiry_date: '10/26', qty: 2, unit_price: 34.00, total_price: 68.00, is_loose_tablet: 0 },
+      { id: 2, product_name: 'Augmentin 625 Duo', batch_no: 'AG9921', expiry_date: '12/26', qty: 1, unit_price: 170.50, total_price: 170.50, is_loose_tablet: 0 }
+    ]
+  },
+  {
+    id: 2,
+    invoice_no: 'INV-20261016-002',
+    customer_name: 'Anita Pawar',
+    customer_mobile: '9421556677',
+    doctor_name: null,
+    payment_mode: 'cash',
+    total_amount: 253.00,
+    discount: 5.00,
+    final_amount: 248.00,
+    created_at: '2026-10-16 19:15:00',
+    item_count: 2,
+    items: [
+      { id: 3, product_name: 'Calpol 650 Tablet', batch_no: 'CP6610', expiry_date: '02/27', qty: 1, unit_price: 33.50, total_price: 33.50, is_loose_tablet: 0 },
+      { id: 4, product_name: 'Telma 40 Tablet', batch_no: 'TL4002', expiry_date: '11/26', qty: 1, unit_price: 214.50, total_price: 214.50, is_loose_tablet: 0 }
+    ]
+  },
+  {
+    id: 3,
+    invoice_no: 'INV-20261016-003',
+    customer_name: 'Ramesh Patil (Grampanchayat)',
+    customer_mobile: '9822114477',
+    doctor_name: 'Dr. Patil',
+    payment_mode: 'khata',
+    total_amount: 450.00,
+    discount: 0,
+    final_amount: 450.00,
+    created_at: '2026-10-16 20:30:00',
+    item_count: 1,
+    items: [
+      { id: 5, product_name: 'Telma 40 Tablet', batch_no: 'TL5112', expiry_date: '03/27', qty: 2, unit_price: 225.00, total_price: 450.00, is_loose_tablet: 0 }
+    ]
+  }
+];
+
+const loadFallbackInvoices = () => {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('gaavpharma_invoices') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {}
+  return [...INITIAL_INVOICES];
+};
+
 // In-memory fallback mock with localStorage persistence for web dev preview
 const fallbackStorage = {
   license: loadFallbackLicense(),
@@ -322,11 +386,7 @@ const fallbackStorage = {
     { id: 3, name: 'Sunita Kadam (Asha Worker)', mobile: '9158442200', balance: 250.00, last_activity: '2026-10-12 09:15:00' },
     { id: 4, name: 'Vitthal Shinde (Krushi Seva)', mobile: '9890123456', balance: 0.00, last_activity: '2026-10-10 14:00:00' }
   ],
-  invoices: [
-    { id: 1, invoice_no: 'INV-20261016-001', customer_name: 'Ganesh Kulkarni', customer_mobile: '9822345678', doctor_name: 'Dr. Joshi', payment_mode: 'upi', total_amount: 238.50, discount: 0, final_amount: 238.50, created_at: '2026-10-16 17:00:00', item_count: 2 },
-    { id: 2, invoice_no: 'INV-20261016-002', customer_name: 'Anita Pawar', customer_mobile: '9421556677', doctor_name: null, payment_mode: 'cash', total_amount: 253.00, discount: 5.00, final_amount: 248.00, created_at: '2026-10-16 19:15:00', item_count: 2 },
-    { id: 3, invoice_no: 'INV-20261016-003', customer_name: 'Ramesh Patil (Grampanchayat)', customer_mobile: '9822114477', doctor_name: 'Dr. Patil', payment_mode: 'khata', total_amount: 450.00, discount: 0, final_amount: 450.00, created_at: '2026-10-16 20:30:00', item_count: 1 }
-  ],
+  invoices: loadFallbackInvoices(),
   distributors: [
     { id: 1, name: 'Mahaveer Pharma Distributors', phone: '9822012345', gstin: '27AABCM1234P1Z2', pending_balance: 14250.00 },
     { id: 2, name: 'Sunlife Healthcare Agency', phone: '9423098765', gstin: '27AABCS9876Q1Z8', pending_balance: 8600.00 },
@@ -786,6 +846,30 @@ export const api = {
   getInvoices: async (limit) => {
     if (isElectron) return window.electronAPI.getInvoices(limit);
     return fallbackStorage.invoices;
+  },
+
+  getInvoiceDetails: async (invoiceId) => {
+    if (isElectron) return window.electronAPI.getInvoiceDetails(invoiceId);
+    const id = Number(invoiceId);
+    const invoice = fallbackStorage.invoices.find(
+      (i) => i.id === invoiceId || i.id === id || i.invoice_no === invoiceId
+    );
+    if (!invoice) return null;
+    if (!invoice.items || !Array.isArray(invoice.items) || invoice.items.length === 0) {
+      invoice.items = [
+        {
+          id: 1,
+          product_name: 'Medicine Item',
+          batch_no: 'DL3811',
+          expiry_date: '10/26',
+          qty: invoice.item_count || 1,
+          unit_price: Number(invoice.final_amount) || 34.00,
+          total_price: Number(invoice.final_amount) || 34.00,
+          is_loose_tablet: 0
+        }
+      ];
+    }
+    return { ...invoice };
   },
 
   getDailyRegisterSummary: async () => {

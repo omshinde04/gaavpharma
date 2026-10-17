@@ -99,14 +99,21 @@ async function runTestSuite() {
   const superAdminStillExists = usersAfterDelete.some((u) => u.role === 'super_admin');
   assert(superAdminStillExists, 'Super Admin CANNOT be deleted (protected from store-level deletion)');
 
-  // 5. Billing & Products Inventory Test
-  console.log('\n💊 [TEST GROUP 5] POS Billing & Inventory Radar');
+  // 6. Billing, Invoices & Receipt Modal Details Test
+  console.log('\n💊 [TEST GROUP 6] POS Billing, Invoices & Receipt Modal');
   const searchResults = await api.searchProducts('Dolo');
   assert(searchResults.length > 0 && searchResults[0].name.includes('Dolo'), 'Fast product search returns Dolo 650');
   assert(searchResults[0].active_batch !== null, 'Active batch attached with expiry date and MRP');
 
   const expiryData = await api.getExpiryRadarData();
   assert(expiryData && expiryData.batches && expiryData.batches.length > 0, 'Expiry Radar tracks all medicine batches and calculates PTR loss');
+
+  const invoiceList = await api.getInvoices();
+  assert(Array.isArray(invoiceList) && invoiceList.length > 0, 'getInvoices returns active invoice list');
+
+  const invoiceDetails = await api.getInvoiceDetails(invoiceList[0].id);
+  assert(invoiceDetails !== null, 'getInvoiceDetails returns invoice details successfully');
+  assert(Array.isArray(invoiceDetails.items) && invoiceDetails.items.length > 0, 'Invoice details contains populated items array for ReceiptModal');
 
   // 6. Provider Hub Licensing Engine Test
   console.log('\n👑 [TEST GROUP 6] Super Admin SaaS Licensing Engine');

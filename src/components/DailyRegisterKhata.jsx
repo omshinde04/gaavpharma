@@ -386,11 +386,17 @@ export default function DailyRegisterKhata({ currentUser, featureToggles, storeP
                       </td>
                       <td className="py-2.5 px-3.5 text-center font-sans">
                         <button
+                          type="button"
                           onClick={async () => {
-                            const details = await api.getInvoiceDetails(inv.id);
-                            setSelectedInvoice(details || inv);
+                            try {
+                              const details = await api.getInvoiceDetails(inv.id);
+                              setSelectedInvoice(details || inv);
+                            } catch (err) {
+                              console.error('Failed to load invoice details:', err);
+                              setSelectedInvoice(inv);
+                            }
                           }}
-                          className="px-2 py-1 bg-white hover:bg-slate-50 text-slate-700 rounded border border-slate-200 text-xs font-medium flex items-center justify-center gap-1 mx-auto shadow-2xs"
+                          className="px-2 py-1 bg-white hover:bg-slate-50 text-slate-700 rounded border border-slate-200 text-xs font-medium flex items-center justify-center gap-1 mx-auto shadow-2xs cursor-pointer transition-colors"
                         >
                           <Eye className="w-3 h-3 text-slate-400" /> View
                         </button>
