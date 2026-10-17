@@ -30,13 +30,19 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
     auto_print: 0
   });
 
-  const [toggles, setToggles] = useState({
-    allow_khata: true,
-    allow_loose_tablets: true,
-    allow_whatsapp: true,
-    enforce_h1_doctor: false,
-    max_cashier_discount: 10,
-    hide_drawer_from_cashier: false
+  const [toggles, setToggles] = useState(() => {
+    try {
+      const raw = localStorage.getItem('gaavpharma_feature_toggles');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return {
+      allow_khata: true,
+      allow_loose_tablets: true,
+      allow_whatsapp: true,
+      enforce_h1_doctor: false,
+      max_cashier_discount: 10,
+      hide_drawer_from_cashier: false
+    };
   });
 
   const [users, setUsers] = useState([]);
@@ -88,6 +94,9 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
     const updated = { ...toggles, [key]: val };
     setToggles(updated);
     if (onTogglesUpdated) onTogglesUpdated(updated);
+    try {
+      localStorage.setItem('gaavpharma_feature_toggles', JSON.stringify(updated));
+    } catch (e) {}
 
     // Save in background
     api.updateFeatureToggle(key, val).catch((err) => {

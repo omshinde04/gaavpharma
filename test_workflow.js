@@ -80,8 +80,20 @@ async function runTestSuite() {
   const reactivatedLogin = await api.loginWithPin('5566');
   assert(reactivatedLogin !== null, 'Reactivated cashier can log in again');
 
-  // 4. Security & Super Admin Protection Test
-  console.log('\n🛡️ [TEST GROUP 4] Security & Super Admin Isolation');
+  // 4. Feature Toggles & Control Center Test
+  console.log('\n🎛️ [TEST GROUP 4] Store Admin Feature Toggles & Persistence');
+  const initialToggles = await api.getFeatureToggles();
+  assert(initialToggles !== null, 'Feature toggles retrieved successfully');
+
+  // Toggle on enforce_h1_doctor and hide_drawer_from_cashier
+  await api.updateFeatureToggle('enforce_h1_doctor', true);
+  await api.updateFeatureToggle('hide_drawer_from_cashier', true);
+  const updatedToggles = await api.getFeatureToggles();
+  assert(updatedToggles.enforce_h1_doctor === true, 'enforce_h1_doctor persists as true');
+  assert(updatedToggles.hide_drawer_from_cashier === true, 'hide_drawer_from_cashier persists as true');
+
+  // 5. Security & Super Admin Protection Test
+  console.log('\n🛡️ [TEST GROUP 5] Security & Super Admin Isolation');
   await api.deleteUser(1); // Try to delete Super Admin (id: 1)
   const usersAfterDelete = await api.getUsers();
   const superAdminStillExists = usersAfterDelete.some((u) => u.role === 'super_admin');

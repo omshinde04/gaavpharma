@@ -46,13 +46,32 @@ export default function App() {
     } catch {}
     return null;
   });
-  const [featureToggles, setFeatureToggles] = useState({
-    allow_khata: true,
-    allow_loose_tablets: true,
-    allow_whatsapp: true,
-    enforce_h1_doctor: false,
-    max_cashier_discount: 10,
-    hide_drawer_from_cashier: false
+  const [featureToggles, setFeatureToggles] = useState(() => {
+    try {
+      const raw = localStorage.getItem('gaavpharma_feature_toggles');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            allow_khata: true,
+            allow_loose_tablets: true,
+            allow_whatsapp: true,
+            enforce_h1_doctor: false,
+            max_cashier_discount: 10,
+            hide_drawer_from_cashier: false,
+            ...parsed
+          };
+        }
+      }
+    } catch {}
+    return {
+      allow_khata: true,
+      allow_loose_tablets: true,
+      allow_whatsapp: true,
+      enforce_h1_doctor: false,
+      max_cashier_discount: 10,
+      hide_drawer_from_cashier: false
+    };
   });
 
   // Modals
@@ -246,7 +265,12 @@ export default function App() {
         <StoreSettingsModal
           onClose={() => setShowStoreSettings(false)}
           onProfileUpdated={(updated) => setStoreProfile(updated)}
-          onTogglesUpdated={(updated) => setFeatureToggles(updated)}
+          onTogglesUpdated={(updated) => {
+            setFeatureToggles(updated);
+            try {
+              localStorage.setItem('gaavpharma_feature_toggles', JSON.stringify(updated));
+            } catch {}
+          }}
           onUserUpdated={(updatedUser) => {
             if (currentUser && currentUser.id === updatedUser.id) {
               const merged = { ...currentUser, ...updatedUser };

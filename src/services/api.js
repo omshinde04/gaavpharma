@@ -113,19 +113,39 @@ if (typeof window !== 'undefined') {
   } catch (e) {}
 }
 
+const DEFAULT_FEATURE_TOGGLES = {
+  allow_khata: true,
+  allow_loose_tablets: true,
+  allow_whatsapp: true,
+  enforce_h1_doctor: false,
+  max_cashier_discount: 10,
+  hide_drawer_from_cashier: false
+};
+
+const loadFallbackFeatureToggles = () => {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('gaavpharma_feature_toggles') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return { ...DEFAULT_FEATURE_TOGGLES, ...parsed };
+      }
+    }
+  } catch (e) {}
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('gaavpharma_feature_toggles', JSON.stringify(DEFAULT_FEATURE_TOGGLES));
+    } catch (e) {}
+  }
+  return { ...DEFAULT_FEATURE_TOGGLES };
+};
+
 // In-memory fallback mock with localStorage persistence for web dev preview
 const fallbackStorage = {
   license: loadFallbackLicense(),
   storeProfile: loadFallbackStoreProfile(),
   users: loadFallbackUsers(),
-  featureToggles: {
-    allow_khata: true,
-    allow_loose_tablets: true,
-    allow_whatsapp: true,
-    enforce_h1_doctor: false,
-    max_cashier_discount: 10,
-    hide_drawer_from_cashier: false
-  },
+  featureToggles: loadFallbackFeatureToggles(),
   products: [
     {
       id: 1,
@@ -601,13 +621,18 @@ export const api = {
 
   getFeatureToggles: async () => {
     if (isElectron) return window.electronAPI.getFeatureToggles();
-    return fallbackStorage.featureToggles;
+    return { ...fallbackStorage.featureToggles };
   },
 
   updateFeatureToggle: async (key, value) => {
     if (isElectron) return window.electronAPI.updateFeatureToggle(key, value);
     fallbackStorage.featureToggles[key] = value;
-    return fallbackStorage.featureToggles;
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_feature_toggles', JSON.stringify(fallbackStorage.featureToggles));
+      } catch (e) {}
+    }
+    return { ...fallbackStorage.featureToggles };
   },
 
   // Products
