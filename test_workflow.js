@@ -318,6 +318,112 @@ async function runTestSuite() {
   assert(Number(distAfterClear.distributor.pending_balance) === 0, 'clearAllRecords resets distributor debt to ₹0');
   assert(distAfterClear.entries.length === 0, 'clearAllRecords wipes distributor ledger transactions');
 
+  // 9. Phase 2: Expiry GST Debit Notes & Supplier Returns Engine Test
+  console.log('\n📦 [TEST GROUP 9] Expiry GST Debit Notes & Supplier Returns Engine (Section 34 CGST)');
+
+  // 9.1 Create fresh distributor with debt
+  const distForReturn = await api.addDistributor({
+    name: 'Nashik Central Stockists',
+    phone: '9850123456',
+    gstin: '27AABCS5555R1Z2',
+    dl_number: '20B/21B-MH-NAS-9912',
+    address: 'Ambad Industrial Area, Nashik',
+    payment_terms_days: 15
+  });
+
+  // Inward an initial bill so the distributor has a pending balance and medicine has stock
+  const returnPurchaseItems = [
+    {
+      product_id: 1,
+      item_name: 'Dolo 650 Tablet',
+      batch_no: 'EXP8821',
+      expiry_date: '10/26',
+      qty: 20,
+      free_qty: 0,
+      purchase_rate: 20.00,
+      mrp: 30.00,
+      gst_pct: 12,
+      discount_pct: 0,
+      taxable_amount: 400.00,
+      gst_amount: 48.00,
+      total_amount: 448.00,
+      landing_cost_per_unit: 22.40
+    }
+  ];
+
+  await api.createPurchase({
+    distributor_id: distForReturn.id,
+    bill_no: 'BILL-NCS-101',
+    bill_date: '2026-10-17',
+    subtotal: 400.00,
+    tax_amount: 48.00,
+    net_amount: 448.00,
+    payment_status: 'UNPAID',
+    payment_mode: 'credit'
+  }, returnPurchaseItems);
+
+  const distLedgerBeforeDebit = await api.getDistributorLedger(distForReturn.id);
+  assert(Number(distLedgerBeforeDebit.distributor.pending_balance) === 448.00, 'Distributor has initial pending debt of ₹448.00');
+
+  const doloStockBeforeReturn = (await api.searchProducts('Dolo'))[0].total_stock;
+
+  // 9.2 Issue GST Debit Note for returning 5 units of EXP8821
+  // 5 units * ₹20 PTR = ₹100 taxable. 12% GST = ₹12. Total Claim = ₹112.00
+  const debitNoteData = {
+    distributor_id: distForReturn.id,
+    note_no: 'DN-202610-7701',
+    note_date: '2026-10-17',
+    subtotal: 100.00,
+    tax_amount: 12.00,
+    total_claim_amount: 112.00,
+    status: 'ISSUED',
+    reason: 'EXPIRY_RETURN',
+    notes: 'Short expiry return under Sec 34 CGST Act'
+  };
+
+  const debitNoteItems = [
+    {
+      product_id: 1,
+      product_name: 'Dolo 650 Tablet',
+      batch_no: 'EXP8821',
+      expiry_date: '10/26',
+      qty: 5,
+      purchase_rate: 20.00,
+      gst_rate: 12,
+      taxable_amount: 100.00,
+      cgst_amount: 6.00,
+      sgst_amount: 6.00,
+      total_amount: 112.00
+    }
+  ];
+
+  const createdDebitNote = await api.createDebitNote(debitNoteData, debitNoteItems);
+  assert(createdDebitNote && createdDebitNote.note_no === 'DN-202610-7701', 'Official GST Debit Note issued with DN- number');
+  assert(Number(createdDebitNote.total_claim_amount) === 112.00, 'Debit note calculated total credit claim of ₹112.00 accurately');
+
+  // 9.3 Verify inventory stock deducted
+  const doloStockAfterReturn = (await api.searchProducts('Dolo'))[0].total_stock;
+  assert(doloStockAfterReturn === doloStockBeforeReturn - 5, 'Returned batch quantity immediately deducted from inventory stock (-5 units)');
+
+  // 9.4 Verify distributor ledger credited with DEBIT_NOTE_RETURN
+  const distLedgerAfterDebit = await api.getDistributorLedger(distForReturn.id);
+  const debitEntry = distLedgerAfterDebit.entries.find(e => e.type === 'DEBIT_NOTE_RETURN');
+  assert(debitEntry !== undefined, 'Distributor ledger logs DEBIT_NOTE_RETURN transaction');
+  assert(Number(debitEntry.amount) === 112.00, 'Ledger transaction records exact claim amount ₹112.00');
+
+  // 9.5 Verify distributor pending balance reduced (448 - 112 = 336)
+  assert(Number(distLedgerAfterDebit.distributor.pending_balance) === 336.00, 'Distributor pending balance automatically reduced by claim (₹448 - ₹112 = ₹336)');
+
+  // 9.6 Verify Debit Note Details API
+  const fetchedDebitNote = await api.getDebitNoteDetails(createdDebitNote.id);
+  assert(fetchedDebitNote && fetchedDebitNote.items.length === 1, 'getDebitNoteDetails retrieves itemized breakdown with CGST and SGST');
+  assert(fetchedDebitNote.items[0].batch_no === 'EXP8821', 'Debit note item reflects correct batch number');
+
+  // 9.7 Verify clearAllRecords wipes debit notes
+  await api.clearAllRecords();
+  const debitNotesAfterClear = await api.getDebitNotes();
+  assert(debitNotesAfterClear.length === 0, 'clearAllRecords wipes all debit notes from storage');
+
   console.log('\n========================================================');
   console.log(`🏁 TEST RESULTS: ${passed} PASSED | ${failed} FAILED`);
   console.log('========================================================\n');

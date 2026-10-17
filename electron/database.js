@@ -170,6 +170,35 @@ function createTables() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS debit_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      note_no TEXT UNIQUE NOT NULL,
+      distributor_id INTEGER NOT NULL REFERENCES distributors(id),
+      note_date TEXT NOT NULL,
+      subtotal REAL NOT NULL,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      total_claim_amount REAL NOT NULL,
+      status TEXT CHECK(status IN ('ISSUED', 'ACCEPTED', 'SETTLED', 'REJECTED')) DEFAULT 'ISSUED',
+      reason TEXT DEFAULT 'EXPIRY_RETURN',
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS debit_note_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      debit_note_id INTEGER NOT NULL REFERENCES debit_notes(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      batch_no TEXT NOT NULL,
+      expiry_date TEXT NOT NULL,
+      qty INTEGER NOT NULL,
+      purchase_rate REAL NOT NULL,
+      gst_rate REAL DEFAULT 12,
+      taxable_amount REAL NOT NULL,
+      cgst_amount REAL NOT NULL,
+      sgst_amount REAL NOT NULL,
+      total_amount REAL NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS customers_khata (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -1607,12 +1636,146 @@ function getPurchaseSummary() {
   };
 }
 
+function getDebitNotes(limit = 50) {
+  if (!db) initDatabase();
+  return db.prepare(`
+    SELECT dn.*, d.name as distributor_name, d.phone as distributor_phone, d.gstin as distributor_gstin,
+           (SELECT COUNT(*) FROM debit_note_items WHERE debit_note_id = dn.id) as item_count
+    FROM debit_notes dn
+    LEFT JOIN distributors d ON dn.distributor_id = d.id
+    ORDER BY dn.id DESC
+    LIMIT ?
+  `).all(limit);
+}
+
+function getDebitNoteDetails(noteId) {
+  if (!db) initDatabase();
+  const note = db.prepare(`
+    SELECT dn.*, d.name as distributor_name, d.phone as distributor_phone, d.gstin as distributor_gstin, d.dl_number as distributor_dl, d.address as distributor_address
+    FROM debit_notes dn
+    LEFT JOIN distributors d ON dn.distributor_id = d.id
+    WHERE dn.id = ?
+  `).get(noteId);
+  if (!note) return null;
+
+  const items = db.prepare(`
+    SELECT dni.*, pr.name as product_name, pr.generic_salt, pr.category
+    FROM debit_note_items dni
+    LEFT JOIN products pr ON dni.product_id = pr.id
+    WHERE dni.debit_note_id = ?
+  `).all(noteId);
+
+  return { ...note, items };
+}
+
+function createDebitNote(noteData, items) {
+  if (!db) initDatabase();
+  const tx = db.transaction(() => {
+    const noteNo = noteData.note_no || (`DN-${new Date().toISOString().slice(0, 7).replace('-', '')}-${String(Date.now()).slice(-4)}`);
+    const noteDate = noteData.note_date || new Date().toISOString().slice(0, 10);
+    const subtotal = parseFloat(noteData.subtotal) || 0;
+    const taxAmount = noteData.tax_amount != null ? parseFloat(noteData.tax_amount) : (parseFloat(noteData.total_tax) || 0);
+    const totalClaimAmount = noteData.total_claim_amount != null ? parseFloat(noteData.total_claim_amount) : (subtotal + taxAmount);
+
+    const stmtNote = db.prepare(`
+      INSERT INTO debit_notes (
+        note_no, distributor_id, note_date, subtotal, tax_amount, total_claim_amount, status, reason, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const resNote = stmtNote.run(
+      noteNo,
+      noteData.distributor_id,
+      noteDate,
+      subtotal,
+      taxAmount,
+      totalClaimAmount,
+      noteData.status || 'ISSUED',
+      noteData.reason || 'EXPIRY_RETURN',
+      noteData.notes || null
+    );
+
+    const debitNoteId = resNote.lastInsertRowid;
+
+    const stmtItem = db.prepare(`
+      INSERT INTO debit_note_items (
+        debit_note_id, product_id, batch_no, expiry_date, qty, purchase_rate, gst_rate,
+        taxable_amount, cgst_amount, sgst_amount, total_amount
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const deductBatch = db.prepare(`
+      UPDATE batches
+      SET stock_qty = MAX(0, stock_qty - ?)
+      WHERE product_id = ? AND batch_no = ?
+    `);
+
+    const updateProductTotal = db.prepare(`
+      UPDATE products
+      SET total_stock = (SELECT COALESCE(SUM(stock_qty), 0) FROM batches WHERE product_id = ?)
+      WHERE id = ?
+    `);
+
+    for (const item of items) {
+      const qty = parseInt(item.qty, 10) || 0;
+      const rate = parseFloat(item.purchase_rate) || 0;
+      const gstRate = item.gst_rate != null ? parseFloat(item.gst_rate) : (parseFloat(item.gst_pct) || 12);
+      const taxable = item.taxable_amount != null ? parseFloat(item.taxable_amount) : (qty * rate);
+      const cgst = item.cgst_amount != null ? parseFloat(item.cgst_amount) : ((taxable * (gstRate / 2)) / 100);
+      const sgst = item.sgst_amount != null ? parseFloat(item.sgst_amount) : ((taxable * (gstRate / 2)) / 100);
+      const totalAmount = item.total_amount != null ? parseFloat(item.total_amount) : (taxable + cgst + sgst);
+
+      stmtItem.run(
+        debitNoteId,
+        item.product_id,
+        item.batch_no,
+        item.expiry_date,
+        qty,
+        rate,
+        gstRate,
+        taxable,
+        cgst,
+        sgst,
+        totalAmount
+      );
+
+      // Deduct returned quantity from active stock
+      deductBatch.run(qty, item.product_id, item.batch_no);
+      updateProductTotal.run(item.product_id, item.product_id);
+    }
+
+    // Ledger Entry for Debit Note Return
+    db.prepare(`
+      INSERT INTO distributor_ledger (distributor_id, type, amount, reference_no, payment_mode, notes)
+      VALUES (?, 'DEBIT_NOTE_RETURN', ?, ?, 'ADJUSTMENT', ?)
+    `).run(
+      noteData.distributor_id,
+      totalClaimAmount,
+      noteNo,
+      `GST Expiry Return Claim #${noteNo} (${items.length} items)`
+    );
+
+    // Auto-deduct from distributor pending debt (आपले देणे कमी करा)
+    db.prepare(`
+      UPDATE distributors
+      SET pending_balance = MAX(0, pending_balance - ?)
+      WHERE id = ?
+    `).run(totalClaimAmount, noteData.distributor_id);
+
+    return getDebitNoteDetails(debitNoteId);
+  });
+
+  return tx();
+}
+
 function clearAllRecords() {
   if (!db) initDatabase();
   db.prepare(`DELETE FROM invoice_items`).run();
   db.prepare(`DELETE FROM invoices`).run();
   db.prepare(`DELETE FROM khata_transactions`).run();
   db.prepare(`DELETE FROM customers_khata`).run();
+  db.prepare(`DELETE FROM debit_note_items`).run();
+  db.prepare(`DELETE FROM debit_notes`).run();
   db.prepare(`DELETE FROM purchase_items`).run();
   db.prepare(`DELETE FROM purchases`).run();
   db.prepare(`DELETE FROM distributor_ledger`).run();
@@ -1666,5 +1829,8 @@ module.exports = {
   getDistributorLedger,
   addDistributorPayment,
   getPurchaseSummary,
+  getDebitNotes,
+  getDebitNoteDetails,
+  createDebitNote,
   clearAllRecords
 };

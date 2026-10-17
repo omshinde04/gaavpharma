@@ -122,6 +122,9 @@ function setupIpcHandlers() {
   ipcMain.handle('db:getDistributorLedger', (_, distributorId) => db.getDistributorLedger(distributorId));
   ipcMain.handle('db:addDistributorPayment', (_, distributorId, amount, paymentMode, referenceNo, note) => db.addDistributorPayment(distributorId, amount, paymentMode, referenceNo, note));
   ipcMain.handle('db:getPurchaseSummary', () => db.getPurchaseSummary());
+  ipcMain.handle('db:getDebitNotes', (_, limit) => db.getDebitNotes(limit));
+  ipcMain.handle('db:getDebitNoteDetails', (_, noteId) => db.getDebitNoteDetails(noteId));
+  ipcMain.handle('db:createDebitNote', (_, noteData, items) => db.createDebitNote(noteData, items));
 
   // System Utilities
   ipcMain.handle('sys:openExternalUrl', async (_, url) => {

@@ -61,6 +61,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDistributorLedger: (distributorId) => ipcRenderer.invoke('db:getDistributorLedger', distributorId),
   addDistributorPayment: (distributorId, amount, paymentMode, referenceNo, note) => ipcRenderer.invoke('db:addDistributorPayment', distributorId, amount, paymentMode, referenceNo, note),
   getPurchaseSummary: () => ipcRenderer.invoke('db:getPurchaseSummary'),
+  getDebitNotes: (limit) => ipcRenderer.invoke('db:getDebitNotes', limit),
+  getDebitNoteDetails: (noteId) => ipcRenderer.invoke('db:getDebitNoteDetails', noteId),
+  createDebitNote: (noteData, items) => ipcRenderer.invoke('db:createDebitNote', noteData, items),
 
   // System Utilities
   openExternalUrl: (url) => ipcRenderer.invoke('sys:openExternalUrl', url),

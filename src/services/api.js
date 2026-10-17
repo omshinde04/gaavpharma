@@ -216,6 +216,17 @@ const loadFallbackDistributorLedger = () => {
   return [];
 };
 
+const loadFallbackDebitNotes = () => {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('gaavpharma_debit_notes') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  return [];
+};
+
 const INITIAL_PRODUCTS = [
   {
     id: 1,
@@ -409,7 +420,8 @@ const fallbackStorage = {
   invoices: loadFallbackInvoices(),
   distributors: loadFallbackDistributors(),
   purchases: loadFallbackPurchases(),
-  distributorLedger: loadFallbackDistributorLedger()
+  distributorLedger: loadFallbackDistributorLedger(),
+  debitNotes: loadFallbackDebitNotes()
 };
 
 export const api = {
@@ -1285,12 +1297,126 @@ export const api = {
     };
   },
 
+  getDebitNotes: async (limit = 50) => {
+    if (isElectron) return window.electronAPI.getDebitNotes(limit);
+    return fallbackStorage.debitNotes.slice(0, limit);
+  },
+
+  getDebitNoteDetails: async (noteId) => {
+    if (isElectron) return window.electronAPI.getDebitNoteDetails(noteId);
+    const id = Number(noteId);
+    const note = fallbackStorage.debitNotes.find(n => n.id === id);
+    if (!note) return null;
+    return { ...note };
+  },
+
+  createDebitNote: async (noteData, items) => {
+    if (isElectron) return window.electronAPI.createDebitNote(noteData, items);
+    const noteId = Date.now();
+    const dist = fallbackStorage.distributors.find(d => d.id === Number(noteData.distributor_id));
+    const noteNo = noteData.note_no || (`DN-${new Date().toISOString().slice(0, 7).replace('-', '')}-${String(Date.now()).slice(-4)}`);
+    const noteDate = noteData.note_date || new Date().toISOString().slice(0, 10);
+    const subtotal = parseFloat(noteData.subtotal) || 0;
+    const taxAmount = noteData.tax_amount != null ? parseFloat(noteData.tax_amount) : (parseFloat(noteData.total_tax) || 0);
+    const totalClaimAmount = noteData.total_claim_amount != null ? parseFloat(noteData.total_claim_amount) : (subtotal + taxAmount);
+
+    const processedItems = items.map((item, idx) => {
+      const qty = parseInt(item.qty, 10) || 0;
+      const rate = parseFloat(item.purchase_rate) || 0;
+      const gstRate = item.gst_rate != null ? parseFloat(item.gst_rate) : (parseFloat(item.gst_pct) || 12);
+      const taxable = item.taxable_amount != null ? parseFloat(item.taxable_amount) : (qty * rate);
+      const cgst = item.cgst_amount != null ? parseFloat(item.cgst_amount) : ((taxable * (gstRate / 2)) / 100);
+      const sgst = item.sgst_amount != null ? parseFloat(item.sgst_amount) : ((taxable * (gstRate / 2)) / 100);
+      const totalAmount = item.total_amount != null ? parseFloat(item.total_amount) : (taxable + cgst + sgst);
+
+      // Deduct stock from batches
+      const prod = fallbackStorage.products.find(p => p.id === Number(item.product_id));
+      if (prod) {
+        const batch = prod.batches.find(b => b.batch_no === item.batch_no);
+        if (batch) {
+          batch.stock_qty = Math.max(0, (batch.stock_qty || 0) - qty);
+        }
+        prod.total_stock = prod.batches.reduce((sum, b) => sum + (b.stock_qty || 0), 0);
+      }
+
+      return {
+        id: Date.now() + idx + 10,
+        debit_note_id: noteId,
+        product_id: item.product_id,
+        product_name: item.product_name,
+        generic_salt: item.generic_salt,
+        batch_no: item.batch_no,
+        expiry_date: item.expiry_date,
+        qty: qty,
+        purchase_rate: rate,
+        gst_rate: gstRate,
+        taxable_amount: taxable,
+        cgst_amount: cgst,
+        sgst_amount: sgst,
+        total_amount: totalAmount
+      };
+    });
+
+    const newNote = {
+      id: noteId,
+      note_no: noteNo,
+      distributor_id: Number(noteData.distributor_id),
+      distributor_name: dist ? dist.name : 'Distributor',
+      distributor_phone: dist ? dist.phone : '',
+      distributor_gstin: dist ? dist.gstin : '',
+      distributor_dl: dist ? dist.dl_number : '',
+      distributor_address: dist ? dist.address : '',
+      note_date: noteDate,
+      subtotal: subtotal,
+      tax_amount: taxAmount,
+      total_claim_amount: totalClaimAmount,
+      status: noteData.status || 'ISSUED',
+      reason: noteData.reason || 'EXPIRY_RETURN',
+      notes: noteData.notes || '',
+      item_count: items.length,
+      items: processedItems,
+      created_at: new Date().toISOString()
+    };
+
+    fallbackStorage.debitNotes.unshift(newNote);
+
+    // Ledger Entry for Debit Note
+    const ledgerEntry = {
+      id: Date.now() + 100,
+      distributor_id: Number(noteData.distributor_id),
+      type: 'DEBIT_NOTE_RETURN',
+      amount: totalClaimAmount,
+      reference_no: noteNo,
+      payment_mode: 'ADJUSTMENT',
+      notes: `GST Expiry Return Claim #${noteNo} (${items.length} items)`,
+      created_at: new Date().toISOString()
+    };
+    fallbackStorage.distributorLedger.unshift(ledgerEntry);
+
+    // Deduct from distributor pending balance (आपले देणे कमी करा)
+    if (dist) {
+      dist.pending_balance = Math.max(0, (dist.pending_balance || 0) - totalClaimAmount);
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_debit_notes', JSON.stringify(fallbackStorage.debitNotes));
+        localStorage.setItem('gaavpharma_products', JSON.stringify(fallbackStorage.products));
+        localStorage.setItem('gaavpharma_distributors', JSON.stringify(fallbackStorage.distributors));
+        localStorage.setItem('gaavpharma_distributor_ledger', JSON.stringify(fallbackStorage.distributorLedger));
+      } catch (e) {}
+    }
+
+    return newNote;
+  },
+
   // Clear All Records / Reset Ledger
   clearAllRecords: async () => {
     if (isElectron) return window.electronAPI.clearAllRecords();
     fallbackStorage.invoices = [];
     fallbackStorage.customers = [];
     fallbackStorage.purchases = [];
+    fallbackStorage.debitNotes = [];
     fallbackStorage.distributorLedger = [];
     fallbackStorage.distributors.forEach(d => { d.pending_balance = 0; });
 
@@ -1299,6 +1425,7 @@ export const api = {
         localStorage.setItem('gaavpharma_invoices', JSON.stringify([]));
         localStorage.setItem('gaavpharma_customers', JSON.stringify([]));
         localStorage.setItem('gaavpharma_purchases', JSON.stringify([]));
+        localStorage.setItem('gaavpharma_debit_notes', JSON.stringify([]));
         localStorage.setItem('gaavpharma_distributor_ledger', JSON.stringify([]));
         localStorage.setItem('gaavpharma_distributors', JSON.stringify(fallbackStorage.distributors));
       } catch (e) {}

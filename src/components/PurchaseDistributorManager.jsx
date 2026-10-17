@@ -24,7 +24,10 @@ import {
   Percent,
   Layers,
   Clock,
-  ShieldAlert
+  ShieldAlert,
+  RotateCcw,
+  Printer,
+  Share2
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -49,9 +52,10 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
     );
   }
 
-  const [activeSubTab, setActiveSubTab] = useState('bills'); // 'bills' | 'distributors'
+  const [activeSubTab, setActiveSubTab] = useState('bills'); // 'bills' | 'distributors' | 'debit_notes'
   const [purchases, setPurchases] = useState([]);
   const [distributors, setDistributors] = useState([]);
+  const [debitNotes, setDebitNotes] = useState([]);
   const [products, setProducts] = useState([]);
   const [summary, setSummary] = useState({ total_bills: 0, total_spent: 0, total_payable: 0, distributor_count: 0 });
   const [isLoading, setIsLoading] = useState(false);
@@ -66,6 +70,9 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
   const [showSettleModal, setShowSettleModal] = useState(null); // distributor object
   const [showLedgerModal, setShowLedgerModal] = useState(null); // distributor object
   const [showBillDetailsModal, setShowBillDetailsModal] = useState(null); // purchase object
+  const [showNewDebitNoteModal, setShowNewDebitNoteModal] = useState(false);
+  const [showDebitNoteDetailsModal, setShowDebitNoteDetailsModal] = useState(null); // debit note object
+  const [showDebitNotePrintModal, setShowDebitNotePrintModal] = useState(null); // debit note object
   const [ledgerData, setLedgerData] = useState(null);
 
   // Settle Payment State
@@ -112,21 +119,48 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
   };
   const [purchaseItems, setPurchaseItems] = useState([{ ...initialItemRow }]);
 
+  // New Debit Note Form State
+  const initialDebitNoteForm = {
+    distributor_id: '',
+    note_no: '',
+    note_date: new Date().toISOString().slice(0, 10),
+    reason: 'EXPIRY_RETURN',
+    notes: ''
+  };
+  const [debitNoteForm, setDebitNoteForm] = useState(initialDebitNoteForm);
+
+  const initialDebitItemRow = {
+    product_id: '',
+    product_name: '',
+    generic_salt: '',
+    batch_no: '',
+    expiry_date: '',
+    qty: '',
+    purchase_rate: '',
+    gst_rate: '12'
+  };
+  const [debitNoteItems, setDebitNoteItems] = useState([{ ...initialDebitItemRow }]);
+
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [distList, purchaseList, prodList, summ] = await Promise.all([
+      const [distList, purchaseList, prodList, summ, notesList] = await Promise.all([
         api.getDistributors(),
         api.getPurchases(50),
         api.getAllProducts('all'),
-        api.getPurchaseSummary()
+        api.getPurchaseSummary(),
+        api.getDebitNotes ? api.getDebitNotes(50) : Promise.resolve([])
       ]);
       setDistributors(distList || []);
       setPurchases(purchaseList || []);
       setProducts(prodList || []);
+      setDebitNotes(notesList || []);
       if (summ) setSummary(summ);
       if (distList && distList.length > 0 && !purchaseForm.distributor_id) {
         setPurchaseForm(prev => ({ ...prev, distributor_id: String(distList[0].id) }));
+      }
+      if (distList && distList.length > 0 && !debitNoteForm.distributor_id) {
+        setDebitNoteForm(prev => ({ ...prev, distributor_id: String(distList[0].id) }));
       }
     } catch (err) {
       console.error('Error loading purchase manager data:', err);
@@ -274,6 +308,151 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
     }
   };
 
+  // Compute live totals for Debit Note Modal
+  const computedDebitNoteTotals = useMemo(() => {
+    let subtotal = 0;
+    let totalTax = 0;
+    let totalQty = 0;
+
+    const rowDetails = debitNoteItems.map(item => {
+      const qty = parseFloat(item.qty) || 0;
+      const ptr = parseFloat(item.purchase_rate) || 0;
+      const gstPercent = parseFloat(item.gst_rate) || 0;
+
+      totalQty += qty;
+      const taxable = qty * ptr;
+      const cgst = (taxable * (gstPercent / 2)) / 100;
+      const sgst = (taxable * (gstPercent / 2)) / 100;
+      const lineTax = cgst + sgst;
+      const lineTotal = taxable + lineTax;
+
+      subtotal += taxable;
+      totalTax += lineTax;
+
+      return {
+        ...item,
+        taxable,
+        cgst,
+        sgst,
+        lineTax,
+        lineTotal
+      };
+    });
+
+    const totalClaim = subtotal + totalTax;
+
+    return {
+      rowDetails,
+      subtotal: Number(subtotal.toFixed(2)),
+      totalTax: Number(totalTax.toFixed(2)),
+      totalClaim: Number(totalClaim.toFixed(2)),
+      totalQty
+    };
+  }, [debitNoteItems]);
+
+  const handleAddDebitItemRow = () => {
+    setDebitNoteItems(prev => [...prev, { ...initialDebitItemRow }]);
+  };
+
+  const handleRemoveDebitItemRow = (index) => {
+    if (debitNoteItems.length === 1) return;
+    setDebitNoteItems(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleDebitItemChange = (index, field, value) => {
+    setDebitNoteItems(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+
+      if (field === 'product_id') {
+        const prod = products.find(p => p.id === Number(value));
+        if (prod) {
+          updated[index].product_name = prod.name;
+          updated[index].generic_salt = prod.generic_salt || '';
+          if (prod.batches && prod.batches.length > 0) {
+            const b = prod.batches[0];
+            updated[index].batch_no = b.batch_no || '';
+            updated[index].expiry_date = b.expiry_date || '';
+            updated[index].purchase_rate = String(b.purchase_rate || '');
+          }
+        }
+      }
+      return updated;
+    });
+  };
+
+  const handleSaveDebitNote = async (e) => {
+    e.preventDefault();
+    if (!debitNoteForm.distributor_id) {
+      alert('Please select a wholesale distributor.');
+      return;
+    }
+    const validItems = computedDebitNoteTotals.rowDetails.filter(r => r.product_id && r.batch_no && r.qty > 0 && r.purchase_rate > 0);
+    if (validItems.length === 0) {
+      alert('Please specify at least 1 valid returned medicine item with batch, quantity, and PTR.');
+      return;
+    }
+
+    try {
+      const payload = {
+        ...debitNoteForm,
+        subtotal: computedDebitNoteTotals.subtotal,
+        tax_amount: computedDebitNoteTotals.totalTax,
+        total_claim_amount: computedDebitNoteTotals.totalClaim
+      };
+
+      const itemsPayload = validItems.map(r => ({
+        product_id: Number(r.product_id),
+        product_name: r.product_name,
+        batch_no: r.batch_no.trim().toUpperCase(),
+        expiry_date: r.expiry_date.trim(),
+        qty: parseInt(r.qty, 10),
+        purchase_rate: parseFloat(r.purchase_rate),
+        gst_rate: parseFloat(r.gst_rate) || 12,
+        taxable_amount: r.taxable,
+        cgst_amount: r.cgst,
+        sgst_amount: r.sgst,
+        total_amount: r.lineTotal
+      }));
+
+      const created = await api.createDebitNote(payload, itemsPayload);
+      setShowNewDebitNoteModal(false);
+      setDebitNoteForm(initialDebitNoteForm);
+      setDebitNoteItems([{ ...initialDebitItemRow }]);
+      await loadData();
+      alert(`GST Expiry Debit Note #${created.note_no} created! ₹${created.total_claim_amount.toFixed(2)} credited to ledger.`);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to save debit note. Please check all fields.');
+    }
+  };
+
+  const sendWhatsAppDebitSlip = (dn) => {
+    const phone = dn.distributor_phone?.replace(/[^0-9]/g, '');
+    if (!phone || phone.length < 10) {
+      alert('Valid 10-digit mobile number not found for distributor.');
+      return;
+    }
+    const storeName = storeProfile?.store_name || 'Divya Medical Stores';
+    const msg = 
+`*GST EXPIRY RETURN MEMO / DEBIT NOTE*
+🏥 *${storeName}*
+To: *${dn.distributor_name}*
+📄 Debit Note No: *#${dn.note_no}*
+📅 Date: ${dn.note_date}
+📦 Items: ${dn.item_count || (dn.items ? dn.items.length : 1)} returned
+
+💰 *Taxable Return:* ₹${Number(dn.subtotal).toFixed(2)}
+⚖️ *GST (CGST+SGST):* ₹${Number(dn.tax_amount).toFixed(2)}
+🔴 *TOTAL CLAIM CREDITED:* *₹${Number(dn.total_claim_amount).toFixed(2)}*
+
+_This debit note amount has been adjusted against your ledger pending balance under Sec 34 CGST Act._
+Generated via GaavPharma Pharmacy ERP`;
+
+    const encoded = encodeURIComponent(msg);
+    api.openExternalUrl(`https://wa.me/91${phone}?text=${encoded}`);
+  };
+
   const handleCreateDistributor = async (e) => {
     e.preventDefault();
     if (!newDistributor.name.trim() || !newDistributor.phone.trim()) {
@@ -353,6 +532,15 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
     return !q || d.name?.toLowerCase().includes(q) || d.phone?.includes(q) || d.gstin?.toLowerCase().includes(q);
   });
 
+  const filteredDebitNotes = debitNotes.filter(dn => {
+    const q = searchQuery.toLowerCase().trim();
+    return !q || dn.note_no?.toLowerCase().includes(q) || dn.distributor_name?.toLowerCase().includes(q);
+  });
+
+  const totalDebitClaim = useMemo(() => {
+    return debitNotes.reduce((acc, dn) => acc + (dn.total_claim_amount || 0), 0);
+  }, [debitNotes]);
+
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-50 overflow-hidden select-none font-sans text-xs">
       {/* Top Header Bar */}
@@ -363,11 +551,11 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
               <Truck className="w-4 h-4" />
             </div>
             <h2 className="text-sm font-bold text-slate-900 tracking-tight">
-              Distributor Management & Purchase Inwards (खरेदी व सप्लायर खाते)
+              Distributor Management, Wholesale & Debit Notes (खरेदी, सप्लायर खाते व माल परतावा)
             </h2>
           </div>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            Wholesale tax invoice inwarding, automatic batch stock updates, GST input claims, and vendor ledger.
+            Wholesale tax invoices, auto stock updates, GST Input Credit, vendor ledgers, and Section 34 Expiry Debit Notes.
           </p>
         </div>
 
@@ -386,6 +574,14 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
           >
             <Building2 className="w-3.5 h-3.5 text-slate-500" />
             <span>+ New Distributor</span>
+          </button>
+
+          <button
+            onClick={() => setShowNewDebitNoteModal(true)}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-800 text-xs font-semibold shadow-2xs transition-colors"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+            <span>+ Expiry Debit Note</span>
           </button>
 
           <button
@@ -426,6 +622,19 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
           </div>
         </div>
 
+        <div className="p-3 bg-white rounded-xl border border-amber-200 shadow-xs">
+          <div className="flex items-center justify-between text-[10px] font-semibold text-amber-800 uppercase tracking-wider">
+            <span>Expiry Claims Credited (माल परतावा)</span>
+            <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+          </div>
+          <div className="text-xl font-bold font-mono text-amber-700 mt-1">
+            ₹{totalDebitClaim.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-[10px] text-amber-600 mt-0.5">
+            {debitNotes.length} GST debit notes issued
+          </div>
+        </div>
+
         <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-xs">
           <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
             <span>Registered Distributors</span>
@@ -435,20 +644,7 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
             {distributors.length}
           </div>
           <div className="text-[10px] text-slate-400 mt-0.5">
-            Stockists & wholesalers
-          </div>
-        </div>
-
-        <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-xs">
-          <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
-            <span>Standard Credit Window</span>
-            <Clock className="w-3.5 h-3.5 text-emerald-600" />
-          </div>
-          <div className="text-xl font-bold font-mono text-emerald-700 mt-1">
-            15 - 21 Days
-          </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">
-            Avg distributor credit terms
+            Stockists & wholesalers in Ghoti/Nashik
           </div>
         </div>
       </div>
@@ -479,6 +675,18 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
             <Building2 className="w-3.5 h-3.5" />
             <span>Distributor Directory & Ledgers ({distributors.length})</span>
           </button>
+
+          <button
+            onClick={() => setActiveSubTab('debit_notes')}
+            className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 ${
+              activeSubTab === 'debit_notes'
+                ? 'border-rose-600 text-rose-900 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Expiry Debit Notes (माल परतावा) ({debitNotes.length})</span>
+          </button>
         </div>
 
         {/* Search Input */}
@@ -486,7 +694,13 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
           <input
             type="text"
-            placeholder={activeSubTab === 'bills' ? 'Search by bill no, supplier...' : 'Search supplier, phone, GSTIN...'}
+            placeholder={
+              activeSubTab === 'bills'
+                ? 'Search by bill no, supplier...'
+                : activeSubTab === 'distributors'
+                ? 'Search supplier, phone, GSTIN...'
+                : 'Search debit note no, supplier...'
+            }
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-8 pr-3 py-1 bg-slate-50 border border-slate-200 rounded-md text-xs focus:bg-white focus:border-blue-500"
@@ -638,6 +852,106 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
                       </tr>
                     );
                   })
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* SUBTAB 3: Expiry Debit Notes (माल परतावा) */}
+        {activeSubTab === 'debit_notes' && (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="bg-slate-50/80 text-slate-500 uppercase tracking-wider text-[10px] border-b border-slate-200 font-semibold">
+                  <th className="py-2.5 px-3.5 w-10 text-center">#</th>
+                  <th className="py-2.5 px-3.5 w-36">Debit Note No</th>
+                  <th className="py-2.5 px-3.5 w-28">Issue Date</th>
+                  <th className="py-2.5 px-3.5 min-w-[200px]">Distributor / Stockist</th>
+                  <th className="py-2.5 px-3.5 w-32">Return Reason</th>
+                  <th className="py-2.5 px-3.5 w-20 text-center">Items</th>
+                  <th className="py-2.5 px-3.5 w-28 text-right">Taxable (PTR)</th>
+                  <th className="py-2.5 px-3.5 w-28 text-right">GST Claim</th>
+                  <th className="py-2.5 px-3.5 w-32 text-right">Total Claim (₹)</th>
+                  <th className="py-2.5 px-3.5 w-24 text-center">Status</th>
+                  <th className="py-2.5 px-3.5 w-28 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                {filteredDebitNotes.length === 0 ? (
+                  <tr>
+                    <td colSpan="11" className="py-12 text-center text-slate-400 font-sans">
+                      <RotateCcw className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                      <div>No GST Expiry Debit Notes issued yet.</div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Return near-expiry medicines to stockists to reverse GST and reduce your supplier debt.
+                      </p>
+                      <button
+                        onClick={() => setShowNewDebitNoteModal(true)}
+                        className="mt-2 text-xs text-rose-600 font-semibold hover:underline inline-flex items-center gap-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Issue your first Expiry Debit Note</span>
+                      </button>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredDebitNotes.map((dn, idx) => (
+                    <tr key={dn.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-2.5 px-3.5 text-center text-slate-400 text-[10px]">{idx + 1}</td>
+                      <td className="py-2.5 px-3.5 font-bold text-slate-900">{dn.note_no}</td>
+                      <td className="py-2.5 px-3.5 text-slate-500 text-[10px]">{dn.note_date}</td>
+                      <td className="py-2.5 px-3.5 font-sans font-medium text-slate-900">
+                        <div>{dn.distributor_name}</div>
+                        {dn.distributor_phone && (
+                          <div className="text-[10px] text-slate-400 font-mono">{dn.distributor_phone}</div>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3.5 font-sans">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                          {dn.reason === 'EXPIRY_RETURN' ? 'Expiry Return' : dn.reason}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3.5 text-center">{dn.item_count || (dn.items ? dn.items.length : 1)}</td>
+                      <td className="py-2.5 px-3.5 text-right text-slate-600">₹{Number(dn.subtotal || 0).toFixed(2)}</td>
+                      <td className="py-2.5 px-3.5 text-right text-slate-600">₹{Number(dn.tax_amount || 0).toFixed(2)}</td>
+                      <td className="py-2.5 px-3.5 text-right font-bold text-rose-700">₹{Number(dn.total_claim_amount || 0).toFixed(2)}</td>
+                      <td className="py-2.5 px-3.5 text-center font-sans">
+                        <span className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded uppercase bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          {dn.status || 'ISSUED'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3.5 text-center font-sans space-x-1 whitespace-nowrap">
+                        <button
+                          onClick={async () => {
+                            const details = await api.getDebitNoteDetails(dn.id);
+                            setShowDebitNoteDetailsModal(details || dn);
+                          }}
+                          className="p-1 hover:bg-slate-100 text-slate-600 rounded transition-colors"
+                          title="View Return Items"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const details = await api.getDebitNoteDetails(dn.id);
+                            setShowDebitNotePrintModal(details || dn);
+                          }}
+                          className="p-1 hover:bg-slate-100 text-slate-700 rounded transition-colors"
+                          title="Print Delivery Slip for Agency Van"
+                        >
+                          <Printer className="w-3.5 h-3.5 text-blue-600" />
+                        </button>
+                        <button
+                          onClick={() => sendWhatsAppDebitSlip(dn)}
+                          className="p-1 hover:bg-slate-100 text-slate-700 rounded transition-colors"
+                          title="Send WhatsApp Debit Memo"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
@@ -1319,6 +1633,488 @@ export default function PurchaseDistributorManager({ currentUser, featureToggles
                 className="px-4 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: Create New GST Expiry Debit Note */}
+      {showNewDebitNoteModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-lg bg-rose-600 text-white flex items-center justify-center">
+                  <RotateCcw className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm">Issue GST Expiry Debit Note (माल परतावा व डेबिट नोट नोंदणी)</h3>
+                  <p className="text-[10px] text-slate-400">Section 34 CGST Act compliant credit claim against supplier debt</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowNewDebitNoteModal(false)}
+                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body Form */}
+            <form onSubmit={handleSaveDebitNote} className="flex-1 flex flex-col overflow-hidden">
+              <div className="p-4 bg-slate-50 border-b border-slate-200 grid grid-cols-4 gap-3 shrink-0">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Stockist / Distributor *</label>
+                  <select
+                    value={debitNoteForm.distributor_id}
+                    onChange={(e) => setDebitNoteForm(prev => ({ ...prev, distributor_id: e.target.value }))}
+                    className="w-full bg-white border border-slate-200 rounded-lg p-2 font-medium focus:border-rose-500"
+                    required
+                  >
+                    <option value="">Select Stockist</option>
+                    {distributors.map(d => (
+                      <option key={d.id} value={d.id}>
+                        {d.name} {d.phone ? `(${d.phone})` : ''} — Debt: ₹{Number(d.pending_balance || 0).toFixed(0)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Debit Note No (Auto if blank)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. DN-202610-001"
+                    value={debitNoteForm.note_no}
+                    onChange={(e) => setDebitNoteForm(prev => ({ ...prev, note_no: e.target.value }))}
+                    className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono uppercase"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Return Date</label>
+                  <input
+                    type="date"
+                    value={debitNoteForm.note_date}
+                    onChange={(e) => setDebitNoteForm(prev => ({ ...prev, note_date: e.target.value }))}
+                    className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Return Reason</label>
+                  <select
+                    value={debitNoteForm.reason}
+                    onChange={(e) => setDebitNoteForm(prev => ({ ...prev, reason: e.target.value }))}
+                    className="w-full bg-white border border-slate-200 rounded-lg p-2 font-medium"
+                  >
+                    <option value="EXPIRY_RETURN">Near-Expiry / Expired Return</option>
+                    <option value="BREAKAGE">Breakage / Leaked in Transit</option>
+                    <option value="BATCH_RECALL">Manufacturer Batch Recall</option>
+                    <option value="WRONG_SUPPLY">Wrong Medicine Supplied</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Items Line Table */}
+              <div className="flex-1 p-4 overflow-y-auto space-y-2">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <span>Returned Medicine Batches</span>
+                    <span className="text-[10px] font-normal text-slate-500">(Stock will be deducted from active counter batches)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddDebitItemRow}
+                    className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded font-semibold text-xs flex items-center gap-1 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-rose-600" />
+                    <span>+ Add Return Item</span>
+                  </button>
+                </div>
+
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="bg-slate-100 text-slate-600 uppercase text-[9px] font-bold border-b border-slate-200">
+                        <th className="py-2 px-2.5 w-8">#</th>
+                        <th className="py-2 px-2.5 min-w-[200px]">Medicine / Item *</th>
+                        <th className="py-2 px-2.5 w-28">Batch No *</th>
+                        <th className="py-2 px-2.5 w-24">Expiry *</th>
+                        <th className="py-2 px-2.5 w-20 text-right">Return Qty *</th>
+                        <th className="py-2 px-2.5 w-24 text-right">PTR Rate *</th>
+                        <th className="py-2 px-2.5 w-20 text-center">GST %</th>
+                        <th className="py-2 px-2.5 w-24 text-right">Taxable</th>
+                        <th className="py-2 px-2.5 w-24 text-right">Claim Net</th>
+                        <th className="py-2 px-2 w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-[11px] font-mono">
+                      {computedDebitNoteTotals.rowDetails.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/60">
+                          <td className="py-2 px-2.5 text-slate-400">{idx + 1}</td>
+                          <td className="py-1.5 px-2 font-sans">
+                            <select
+                              value={row.product_id}
+                              onChange={(e) => handleDebitItemChange(idx, 'product_id', e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded p-1 text-xs font-medium"
+                              required
+                            >
+                              <option value="">Select Medicine</option>
+                              {products.map(p => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name} ({p.category})
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="py-1.5 px-2">
+                            <input
+                              type="text"
+                              placeholder="Batch"
+                              value={row.batch_no}
+                              onChange={(e) => handleDebitItemChange(idx, 'batch_no', e.target.value)}
+                              className="w-full border border-slate-200 rounded p-1 uppercase font-bold"
+                              required
+                            />
+                          </td>
+                          <td className="py-1.5 px-2">
+                            <input
+                              type="text"
+                              placeholder="MM/YY"
+                              value={row.expiry_date}
+                              onChange={(e) => handleDebitItemChange(idx, 'expiry_date', e.target.value)}
+                              className="w-full border border-slate-200 rounded p-1"
+                              required
+                            />
+                          </td>
+                          <td className="py-1.5 px-2 text-right">
+                            <input
+                              type="number"
+                              min="1"
+                              placeholder="Qty"
+                              value={row.qty}
+                              onChange={(e) => handleDebitItemChange(idx, 'qty', e.target.value)}
+                              className="w-full border border-slate-200 rounded p-1 text-right font-bold"
+                              required
+                            />
+                          </td>
+                          <td className="py-1.5 px-2 text-right">
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="PTR"
+                              value={row.purchase_rate}
+                              onChange={(e) => handleDebitItemChange(idx, 'purchase_rate', e.target.value)}
+                              className="w-full border border-slate-200 rounded p-1 text-right"
+                              required
+                            />
+                          </td>
+                          <td className="py-1.5 px-2 text-center">
+                            <select
+                              value={row.gst_rate}
+                              onChange={(e) => handleDebitItemChange(idx, 'gst_rate', e.target.value)}
+                              className="border border-slate-200 rounded p-1 text-center"
+                            >
+                              <option value="0">0%</option>
+                              <option value="5">5%</option>
+                              <option value="12">12%</option>
+                              <option value="18">18%</option>
+                            </select>
+                          </td>
+                          <td className="py-2 px-2.5 text-right font-semibold text-slate-700">
+                            ₹{row.taxable.toFixed(2)}
+                          </td>
+                          <td className="py-2 px-2.5 text-right font-bold text-rose-700">
+                            ₹{row.lineTotal.toFixed(2)}
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveDebitItemRow(idx)}
+                              disabled={debitNoteItems.length === 1}
+                              className="text-slate-300 hover:text-rose-600 disabled:opacity-20"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Modal Footer with Live Summary */}
+              <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+                <div className="flex items-center space-x-6 text-xs font-mono">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Returned Units:</span>
+                    <span className="font-bold text-sm text-slate-200">{computedDebitNoteTotals.totalQty} items</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Taxable Return:</span>
+                    <span className="font-bold text-sm text-slate-200">₹{computedDebitNoteTotals.subtotal.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">GST (CGST+SGST):</span>
+                    <span className="font-bold text-sm text-emerald-400">₹{computedDebitNoteTotals.totalTax.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Total Credit Claim (आपले देणे कमी):</span>
+                    <span className="font-bold text-base text-rose-400">₹{computedDebitNoteTotals.totalClaim.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewDebitNoteModal(false)}
+                    className="px-4 py-2 border border-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-md flex items-center gap-1.5 transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Save & Issue GST Debit Note</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 6: View Debit Note Details */}
+      {showDebitNoteDetailsModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-sm">GST Debit Note Details (#{showDebitNoteDetailsModal.note_no})</h3>
+                <p className="text-[10px] text-slate-400">Issued on {showDebitNoteDetailsModal.note_date} to {showDebitNoteDetailsModal.distributor_name}</p>
+              </div>
+              <button onClick={() => setShowDebitNoteDetailsModal(null)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto space-y-3 font-mono text-xs">
+              <div className="grid grid-cols-3 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <div>
+                  <span className="text-slate-400 text-[10px]">Distributor / Stockist:</span>
+                  <div className="font-bold text-slate-800 font-sans">{showDebitNoteDetailsModal.distributor_name}</div>
+                  <div className="text-[10px] text-slate-500">GSTIN: {showDebitNoteDetailsModal.distributor_gstin || 'N/A'}</div>
+                </div>
+                <div>
+                  <span className="text-slate-400 text-[10px]">Taxable Return (PTR):</span>
+                  <div className="font-bold text-slate-800">₹{Number(showDebitNoteDetailsModal.subtotal || 0).toFixed(2)}</div>
+                  <div className="text-[10px] text-slate-500">GST: ₹{Number(showDebitNoteDetailsModal.tax_amount || 0).toFixed(2)}</div>
+                </div>
+                <div>
+                  <span className="text-slate-400 text-[10px]">Net Ledger Credit Claim:</span>
+                  <div className="font-bold text-sm text-rose-700">₹{Number(showDebitNoteDetailsModal.total_claim_amount || 0).toFixed(2)}</div>
+                  <div className="text-[10px] text-emerald-600 font-sans font-semibold">Credited to Apale Dena</div>
+                </div>
+              </div>
+
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-600 uppercase text-[9px] font-bold border-b border-slate-200">
+                      <th className="py-2 px-3">#</th>
+                      <th className="py-2 px-3">Medicine</th>
+                      <th className="py-2 px-3">Batch</th>
+                      <th className="py-2 px-3">Exp</th>
+                      <th className="py-2 px-3 text-center">Return Qty</th>
+                      <th className="py-2 px-3 text-right">PTR Rate</th>
+                      <th className="py-2 px-3 text-center">GST %</th>
+                      <th className="py-2 px-3 text-right">Taxable</th>
+                      <th className="py-2 px-3 text-right">Claim Net</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-[11px]">
+                    {(!showDebitNoteDetailsModal.items || showDebitNoteDetailsModal.items.length === 0) ? (
+                      <tr>
+                        <td colSpan="9" className="py-6 text-center text-slate-400 font-sans">
+                          No line items found.
+                        </td>
+                      </tr>
+                    ) : (
+                      showDebitNoteDetailsModal.items.map((it, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="py-2 px-3 text-slate-400">{idx + 1}</td>
+                          <td className="py-2 px-3 font-sans font-semibold">{it.product_name || 'Medicine'}</td>
+                          <td className="py-2 px-3 font-bold">{it.batch_no}</td>
+                          <td className="py-2 px-3 text-slate-500">{it.expiry_date}</td>
+                          <td className="py-2 px-3 text-center font-bold text-rose-600">{it.qty}</td>
+                          <td className="py-2 px-3 text-right">₹{Number(it.purchase_rate || 0).toFixed(2)}</td>
+                          <td className="py-2 px-3 text-center">{it.gst_rate || 12}%</td>
+                          <td className="py-2 px-3 text-right font-medium">₹{Number(it.taxable_amount || 0).toFixed(2)}</td>
+                          <td className="py-2 px-3 text-right font-bold text-rose-700">₹{Number(it.total_amount || 0).toFixed(2)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-100 border-t border-slate-200 flex justify-end">
+              <button
+                onClick={() => setShowDebitNoteDetailsModal(null)}
+                className="px-4 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 7: Print Official GST Debit Note Voucher (MediVision Parity for Agency Van) */}
+      {showDebitNotePrintModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
+            <div className="p-3 bg-slate-900 text-white flex items-center justify-between shrink-0">
+              <span className="text-xs font-bold flex items-center gap-1.5">
+                <Printer className="w-4 h-4 text-emerald-400" /> Print Official GST Debit Voucher
+              </span>
+              <button onClick={() => setShowDebitNotePrintModal(null)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Printable Voucher Paper Preview */}
+            <div className="p-6 overflow-y-auto flex-1 bg-slate-100">
+              <div className="bg-white p-6 rounded-lg border border-slate-300 shadow-sm font-mono text-xs space-y-4 max-w-2xl mx-auto">
+                {/* Header */}
+                <div className="text-center border-b border-slate-300 pb-3">
+                  <h2 className="text-base font-bold font-sans uppercase tracking-wide text-slate-900">
+                    {storeProfile?.store_name || 'Divya Medical Stores'}
+                  </h2>
+                  <p className="text-[11px] text-slate-600 font-sans mt-0.5">
+                    {storeProfile?.address || 'Main Road, Ghoti-Igatpuri, Dist. Nashik, MH'}
+                  </p>
+                  <div className="text-[10px] text-slate-700 flex justify-center gap-4 mt-1 font-sans">
+                    <span><b>DL No:</b> {storeProfile?.dl_number || '20B/21B-MH-SOL-194829'}</span>
+                    <span><b>GSTIN:</b> {storeProfile?.gstin || '27AABCS1429P1Z1'}</span>
+                    <span><b>Phone:</b> {storeProfile?.phone || '9373545169'}</span>
+                  </div>
+                  <div className="mt-2 inline-block px-3 py-0.5 rounded bg-slate-900 text-white font-sans text-xs font-bold uppercase tracking-wider">
+                    GST DEBIT NOTE / SUPPLIER EXPIRY RETURN MEMO
+                  </div>
+                  <p className="text-[9px] text-slate-500 font-sans mt-0.5">(Issued Under Section 34 of the Central Goods & Services Tax Act, 2017)</p>
+                </div>
+
+                {/* Voucher Meta */}
+                <div className="grid grid-cols-2 gap-4 text-[11px] border-b border-slate-200 pb-3">
+                  <div>
+                    <span className="text-slate-400 text-[10px] block">RETURNED TO STOCKIST:</span>
+                    <span className="font-bold text-slate-900 font-sans block">{showDebitNotePrintModal.distributor_name}</span>
+                    <span className="text-slate-600 font-sans text-[10px] block">{showDebitNotePrintModal.distributor_address || 'Wholesale Market, Nashik'}</span>
+                    <span className="text-slate-600 font-sans text-[10px] block">GSTIN: {showDebitNotePrintModal.distributor_gstin || '27XXXXX0000X1Z1'}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-slate-400 text-[10px] block">DEBIT NOTE DETAILS:</span>
+                    <span className="font-bold text-slate-900 block">Note No: #{showDebitNotePrintModal.note_no}</span>
+                    <span className="text-slate-600 block">Date: {showDebitNotePrintModal.note_date}</span>
+                    <span className="text-slate-600 block">Reason: {showDebitNotePrintModal.reason || 'Expiry Return'}</span>
+                  </div>
+                </div>
+
+                {/* Table */}
+                <table className="w-full text-left text-[10px]">
+                  <thead>
+                    <tr className="border-b border-slate-300 font-bold text-slate-700">
+                      <th className="py-1">#</th>
+                      <th className="py-1">Item Description</th>
+                      <th className="py-1">Batch</th>
+                      <th className="py-1">Exp</th>
+                      <th className="py-1 text-center">Qty</th>
+                      <th className="py-1 text-right">PTR</th>
+                      <th className="py-1 text-center">GST%</th>
+                      <th className="py-1 text-right">Taxable</th>
+                      <th className="py-1 text-right">CGST</th>
+                      <th className="py-1 text-right">SGST</th>
+                      <th className="py-1 text-right">Total Claim</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {showDebitNotePrintModal.items?.map((it, idx) => (
+                      <tr key={idx}>
+                        <td className="py-1 text-slate-400">{idx + 1}</td>
+                        <td className="py-1 font-sans font-medium text-slate-900">{it.product_name}</td>
+                        <td className="py-1 font-bold">{it.batch_no}</td>
+                        <td className="py-1 text-rose-600">{it.expiry_date}</td>
+                        <td className="py-1 text-center font-bold">{it.qty}</td>
+                        <td className="py-1 text-right">₹{Number(it.purchase_rate).toFixed(2)}</td>
+                        <td className="py-1 text-center">{it.gst_rate || 12}%</td>
+                        <td className="py-1 text-right">₹{Number(it.taxable_amount).toFixed(2)}</td>
+                        <td className="py-1 text-right">₹{Number(it.cgst_amount).toFixed(2)}</td>
+                        <td className="py-1 text-right">₹{Number(it.sgst_amount).toFixed(2)}</td>
+                        <td className="py-1 text-right font-bold">₹{Number(it.total_amount).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {/* Totals */}
+                <div className="border-t border-slate-300 pt-2 space-y-1 text-right font-mono text-[11px]">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Total Taxable Value:</span>
+                    <span>₹{Number(showDebitNotePrintModal.subtotal || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Total GST Reversal Claim:</span>
+                    <span>₹{Number(showDebitNotePrintModal.tax_amount || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-slate-300 pt-1 font-bold text-sm text-slate-900">
+                    <span>NET AMOUNT DEBITED / CREDITED:</span>
+                    <span className="text-rose-700">₹{Number(showDebitNotePrintModal.total_claim_amount || 0).toFixed(2)}</span>
+                  </div>
+                </div>
+
+                <div className="text-[10px] text-slate-500 italic border-t border-slate-200 pt-2 font-sans">
+                  Declaration: We hereby confirm that the above listed medicines were returned due to expiry/damage and the corresponding GST input credit reversal is accounted for under Section 34 of the CGST Act.
+                </div>
+
+                {/* Signatures */}
+                <div className="grid grid-cols-2 pt-8 text-center text-xs font-sans text-slate-700">
+                  <div>
+                    <div className="border-t border-slate-400 w-44 mx-auto pt-1 font-semibold">
+                      Agency Van Receiver's Sign
+                    </div>
+                    <span className="text-[10px] text-slate-400">Date & Stamp</span>
+                  </div>
+                  <div>
+                    <div className="border-t border-slate-400 w-44 mx-auto pt-1 font-semibold">
+                      For {storeProfile?.store_name || 'Divya Medical Stores'}
+                    </div>
+                    <span className="text-[10px] text-slate-400">Authorized Pharmacist</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-3 bg-white border-t border-slate-200 flex justify-end space-x-2">
+              <button
+                onClick={() => setShowDebitNotePrintModal(null)}
+                className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => window.print()}
+                className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold flex items-center space-x-1.5 shadow-sm"
+              >
+                <Printer className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Print Voucher</span>
               </button>
             </div>
           </div>
