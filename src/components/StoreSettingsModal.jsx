@@ -99,18 +99,82 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
 
   const handleCreateUser = async (e) => {
     e.preventDefault();
-    if (!newUserData.username || !newUserData.display_name || !newUserData.pin_code) {
+    const pin = (newUserData.pin_code || '').trim();
+    if (!newUserData.username || !newUserData.display_name || !pin) {
       alert('All fields are required.');
       return;
     }
+    if (!/^\d{4}$/.test(pin)) {
+      alert('PIN must be exactly 4 numeric digits (e.g. 5566).');
+      return;
+    }
+    const duplicatePin = users.find((u) => u.is_active && u.pin_code === pin);
+    if (duplicatePin) {
+      alert(
+        `⚠️ Duplicate PIN Conflict:\n` +
+        `PIN "${pin}" is already assigned to "${duplicatePin.display_name}".\n` +
+        `Each staff member must have a unique 4-digit PIN so the system knows who is logging in.`
+      );
+      return;
+    }
+    const duplicateUsername = users.find(
+      (u) => u.username.toLowerCase() === newUserData.username.toLowerCase().trim()
+    );
+    if (duplicateUsername) {
+      alert(`⚠️ Username "${newUserData.username}" is already taken.`);
+      return;
+    }
     try {
-      await api.addUser(newUserData);
+      const added = await api.addUser({ ...newUserData, pin_code: pin });
       setShowAddUser(false);
       setNewUserData({ username: '', display_name: '', pin_code: '', role: 'cashier' });
-      const u = await api.getUsers();
-      setUsers(u);
+      const freshUsers = await api.getUsers();
+      setUsers(freshUsers || [...users, added]);
     } catch (err) {
       alert('Failed to add staff user. Username must be unique.');
+    }
+  };
+
+  const handleChangePin = async (user) => {
+    const newPin = prompt(`Enter new unique 4-digit PIN for "${user.display_name}":`, user.pin_code || '');
+    if (!newPin) return;
+    const cleanPin = newPin.trim();
+    if (!/^\d{4}$/.test(cleanPin)) {
+      alert('PIN must be exactly 4 numeric digits (e.g. 2345).');
+      return;
+    }
+    const duplicate = users.find((u) => u.id !== user.id && u.is_active && u.pin_code === cleanPin);
+    if (duplicate) {
+      alert(
+        `⚠️ Duplicate PIN Conflict:\n` +
+        `PIN "${cleanPin}" is already used by "${duplicate.display_name}".\n` +
+        `Each staff member must have a unique PIN.`
+      );
+      return;
+    }
+    try {
+      await api.updateUser(user.id, { pin_code: cleanPin });
+      setUsers((prev) =>
+        prev.map((u) => (u.id === user.id ? { ...u, pin_code: cleanPin } : u))
+      );
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update PIN.');
+    }
+  };
+
+  const handleDeleteUser = async (user) => {
+    if (user.role === 'super_admin' || user.role === 'store_admin') {
+      alert('Cannot delete Administrator accounts.');
+      return;
+    }
+    if (!confirm(`Are you sure you want to remove staff member "${user.display_name}"?`)) return;
+    try {
+      await api.deleteUser(user.id);
+      setUsers((prev) => prev.filter((u) => u.id !== user.id));
+    } catch (err) {
+      console.error(err);
+      alert('Failed to delete staff member.');
     }
   };
 
@@ -459,39 +523,72 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
               </div>
 
               <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
-                {users.map((u) => (
-                  <div key={u.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
-                    <div>
-                      <div className="font-semibold text-slate-900 flex items-center gap-2">
-                        <span>{u.display_name}</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 uppercase">
-                          {u.role}
-                        </span>
-                        {!u.is_active && (
-                          <span className="text-[10px] text-rose-700 bg-rose-50 px-1.5 py-0.2 rounded">
-                            Deactivated
+                {users.map((u) => {
+                  const isDuplicatePin = users.filter((x) => x.is_active && x.pin_code === u.pin_code).length > 1;
+                  const isProtected = u.role === 'super_admin' || u.role === 'store_admin';
+
+                  return (
+                    <div key={u.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                      <div>
+                        <div className="font-semibold text-slate-900 flex items-center gap-2">
+                          <span>{u.display_name}</span>
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 uppercase">
+                            {u.role}
                           </span>
+                          {!u.is_active && (
+                            <span className="text-[10px] text-rose-700 bg-rose-50 px-1.5 py-0.2 rounded">
+                              Deactivated
+                            </span>
+                          )}
+                          {isDuplicatePin && (
+                            <span className="text-[10px] font-bold text-rose-700 bg-rose-100 border border-rose-300 px-1.5 py-0.2 rounded animate-pulse">
+                              ⚠️ Duplicate PIN Conflict
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-mono mt-0.5 flex items-center gap-2">
+                          <span>Username: <b>{u.username}</b></span>
+                          <span>•</span>
+                          <span className={isDuplicatePin ? 'text-rose-700 font-bold' : ''}>
+                            PIN: <b>•••• ({u.pin_code})</b>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleChangePin(u)}
+                            className="text-[10px] text-emerald-700 hover:text-emerald-900 underline font-sans ml-1 font-semibold"
+                          >
+                            Change PIN
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleUserStatus(u)}
+                          className={`px-2.5 py-1 rounded text-[11px] font-medium border ${
+                            u.is_active
+                              ? 'border-slate-200 text-slate-700 hover:bg-slate-100'
+                              : 'border-emerald-200 text-emerald-800 bg-emerald-50'
+                          }`}
+                        >
+                          {u.is_active ? 'Deactivate' : 'Activate'}
+                        </button>
+
+                        {!isProtected && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteUser(u)}
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors"
+                            title="Delete Staff Member"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         )}
                       </div>
-                      <div className="text-[11px] text-slate-500 font-mono mt-0.5">
-                        Username: <b>{u.username}</b> • PIN: <b>•••• ({u.pin_code})</b>
-                      </div>
                     </div>
-
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => handleToggleUserStatus(u)}
-                        className={`px-2.5 py-1 rounded text-[11px] font-medium border ${
-                          u.is_active
-                            ? 'border-slate-200 text-slate-700 hover:bg-slate-100'
-                            : 'border-emerald-200 text-emerald-800 bg-emerald-50'
-                        }`}
-                      >
-                        {u.is_active ? 'Deactivate' : 'Activate'}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Add User Modal */}
