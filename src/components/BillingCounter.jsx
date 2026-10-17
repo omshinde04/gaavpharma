@@ -602,12 +602,12 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
   }, [focusedProduct, cart, storeProfile]);
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-900 text-slate-100 overflow-hidden select-none font-sans">
+    <div className="flex-1 flex flex-col h-full bg-slate-100 text-slate-900 overflow-hidden select-none font-sans">
       
       {/* 1. TOP MULTI-BILL HOLD BAR (MediVision Parity: Slots 1 to 10) */}
-      <div className="flex items-center space-x-1.5 overflow-x-auto py-1.5 px-3 bg-slate-950 border-b border-slate-800 text-xs shrink-0">
-        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1 shrink-0 flex items-center gap-1">
-          <Layers className="w-3.5 h-3.5 text-blue-400" />
+      <div className="flex items-center space-x-1.5 overflow-x-auto py-1.5 px-3 bg-white border-b border-slate-200 text-xs shrink-0 shadow-2xs">
+        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1 shrink-0 flex items-center gap-1">
+          <Layers className="w-3.5 h-3.5 text-emerald-600" />
           <span>SLOTS:</span>
         </span>
 
@@ -621,17 +621,17 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
               onClick={() => setActiveSlotIdx(idx)}
               className={`flex items-center space-x-1.5 px-3 py-1 rounded-md text-xs font-mono transition-all select-none shrink-0 ${
                 isActive
-                  ? 'bg-blue-600 text-white font-bold shadow-md shadow-blue-900/50 ring-1 ring-blue-400'
+                  ? 'bg-emerald-600 text-white font-bold shadow-xs ring-1 ring-emerald-500'
                   : count > 0
-                    ? 'bg-slate-800 text-emerald-400 hover:bg-slate-700 border border-emerald-500/40 font-semibold'
-                    : 'bg-slate-850 text-slate-400 hover:bg-slate-800 border border-slate-800'
+                    ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300 font-bold'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
               }`}
               title={`Alt+${(idx + 1) % 10} to jump to Slot ${s.id}`}
             >
               <span>{s.id}</span>
               {count > 0 && (
                 <span className={`text-[10px] px-1 py-0.2 rounded font-bold ${
-                  isActive ? 'bg-blue-800 text-blue-100' : 'bg-emerald-950 text-emerald-300'
+                  isActive ? 'bg-emerald-800 text-emerald-50' : 'bg-emerald-200/90 text-emerald-900'
                 }`}>
                   ₹{total.toFixed(0)} ({count})
                 </span>
@@ -642,21 +642,21 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
         {/* Live Active Slot Running Total Display (Photo 7: "3 => 0.00") */}
         <div className="ml-auto flex items-center space-x-3 text-xs shrink-0">
-          <div className="px-3 py-1 rounded-md bg-blue-950/80 border border-blue-500/60 text-blue-300 font-mono font-bold text-xs flex items-center space-x-2">
+          <div className="px-3 py-1 rounded-md bg-emerald-50 border border-emerald-300 text-emerald-800 font-mono font-bold text-xs flex items-center space-x-2">
             <span>Slot {activeSlotIdx + 1} =&gt;</span>
-            <span className="text-white text-sm">₹{netPayable.toFixed(2)}</span>
+            <span className="text-emerald-950 text-sm font-extrabold">₹{netPayable.toFixed(2)}</span>
           </div>
-          <span className="text-[10px] text-slate-400 font-mono hidden lg:inline">
+          <span className="text-[10px] text-slate-500 font-mono hidden lg:inline">
             Alt+1..0: Slots • Alt+P: Mode • F9: Print
           </span>
         </div>
       </div>
 
       {/* 2. TOP FAST SEARCH & MEDICINE AUTOCOMPLETE BAR (Stage 1) */}
-      <div className="p-2.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
+      <div className="p-2.5 bg-white border-b border-slate-200 flex items-center justify-between gap-3 shrink-0">
         <div className="relative flex-1">
           <div className="relative flex items-center">
-            <Search className="w-4 h-4 absolute left-3.5 text-blue-400" />
+            <Search className="w-4 h-4 absolute left-3.5 text-emerald-600" />
             <input
               ref={searchInputRef}
               type="text"
@@ -664,19 +664,19 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={handleSearchInputKeyDown}
               placeholder="औषध शोधा किंवा बारकोड स्कॅन करा... (F4)"
-              className="w-full pl-10 pr-32 py-2 bg-slate-800 hover:bg-slate-750 focus:bg-slate-800 border border-slate-700 rounded-lg text-xs font-medium text-white placeholder-slate-400 focus:border-blue-500 transition-all font-mono"
+              className="w-full pl-10 pr-32 py-2 bg-slate-50 hover:bg-white focus:bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-900 placeholder-slate-400 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-500 transition-all font-mono shadow-2xs"
               autoFocus
             />
-            <div className="absolute right-2.5 flex items-center space-x-1.5 text-xs text-slate-400 font-mono">
-              <span className="bg-slate-700/60 text-slate-300 border border-slate-600/60 px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1">
-                <Barcode className="w-3 h-3 text-blue-400" /> ↑↓ नेव्हिगेट • Enter बॅच निवडा
+            <div className="absolute right-2.5 flex items-center space-x-1.5 text-xs text-slate-500 font-mono">
+              <span className="bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1">
+                <Barcode className="w-3 h-3 text-emerald-600" /> ↑↓ नेव्हिगेट • Enter बॅच निवडा
               </span>
             </div>
           </div>
 
           {/* Instant Search Dropdown (Stage 1: Photo 14) */}
           {searchResults.length > 0 && (
-            <div className="absolute left-0 right-0 mt-1 bg-slate-800 rounded-xl shadow-2xl border border-slate-700 max-h-80 overflow-y-auto z-40 divide-y divide-slate-700/80 animate-in fade-in duration-100 font-mono">
+            <div className="absolute left-0 right-0 mt-1 bg-white rounded-xl shadow-2xl border border-slate-200 max-h-80 overflow-y-auto z-40 divide-y divide-slate-100 animate-in fade-in duration-100 font-mono text-slate-900">
               {searchResults.map((prod, idx) => {
                 const totalStock = prod.total_stock || 0;
                 const isHighlighted = highlightedIndex === idx;
@@ -686,8 +686,8 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                     key={prod.id}
                     className={`p-2.5 transition-colors flex items-center justify-between cursor-pointer ${
                       isHighlighted
-                        ? 'bg-blue-600 text-white font-bold ring-1 ring-blue-300'
-                        : 'hover:bg-slate-700/70 text-slate-200'
+                        ? 'bg-emerald-600 text-white font-bold ring-1 ring-emerald-400'
+                        : 'hover:bg-slate-50 text-slate-800'
                     }`}
                     onClick={() => openBatchSelectionModal(prod)}
                   >
@@ -696,31 +696,49 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                         <span className="font-semibold text-xs tracking-wide">
                           {prod.name}
                         </span>
-                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-900/60 text-amber-300 border border-amber-500/30 font-mono">
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold ${
+                          isHighlighted
+                            ? 'bg-white/20 text-white border border-white/40'
+                            : 'bg-amber-50 text-amber-800 border border-amber-300'
+                        }`}>
                           {prod.rack_location || 'Rack A-1'}
                         </span>
                         {prod.is_schedule_h1 ? (
-                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-950 text-rose-300 border border-rose-700">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                            isHighlighted
+                              ? 'bg-rose-900 text-white border border-rose-300'
+                              : 'bg-rose-50 text-rose-700 border border-rose-300'
+                          }`}>
                             H1
                           </span>
                         ) : null}
-                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-900/60 text-slate-300 uppercase">
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded uppercase ${
+                          isHighlighted
+                            ? 'bg-white/20 text-white border border-white/30'
+                            : 'bg-slate-100 text-slate-700 border border-slate-200'
+                        }`}>
                           {prod.category}
                         </span>
                       </div>
 
                       {prod.generic_salt && (
-                        <div className="text-[10px] text-slate-300 font-normal truncate max-w-lg mt-0.5">
+                        <div className={`text-[10px] font-normal truncate max-w-lg mt-0.5 ${
+                          isHighlighted ? 'text-emerald-100' : 'text-slate-500'
+                        }`}>
                           {prod.generic_salt} ({prod.strip_size || 10} tabs/strip)
                         </div>
                       )}
                     </div>
 
                     <div className="flex items-center space-x-3 text-xs font-mono shrink-0">
-                      <span className="text-emerald-400 font-bold">
+                      <span className={isHighlighted ? 'text-white font-bold' : 'text-emerald-700 font-bold'}>
                         Stock: {totalStock}
                       </span>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-blue-950 text-blue-200 border border-blue-800">
+                      <span className={`text-[10px] px-2 py-0.5 rounded ${
+                        isHighlighted
+                          ? 'bg-white/20 text-white border border-white/40'
+                          : 'bg-emerald-50 text-emerald-800 border border-emerald-300'
+                      }`}>
                         Enter बॅच निवडा &rarr;
                       </span>
                     </div>
@@ -734,10 +752,10 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         {/* Quick Clear Current Bill Button (F2) */}
         <button
           onClick={handleNewSale}
-          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-mono flex items-center space-x-1.5 border border-slate-700 shrink-0"
+          className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-mono flex items-center space-x-1.5 border border-slate-300 shrink-0 font-medium transition-colors"
           title="Clear current slot bill (F2)"
         >
-          <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+          <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
           <span>New Bill (F2)</span>
         </button>
       </div>
@@ -746,33 +764,33 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
       <div className="flex-1 flex overflow-hidden">
         
         {/* Left Side: High-Density Counter Table */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-slate-900">
+        <div className="flex-1 flex flex-col overflow-hidden bg-white">
           
           {/* Table Header Bar */}
-          <div className="bg-slate-950/70 px-4 py-2 border-b border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400">
+          <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex items-center justify-between text-xs font-mono text-slate-600">
             <div className="flex items-center space-x-3">
-              <span className="font-bold text-white tracking-wider">
+              <span className="font-bold text-slate-900 tracking-wider">
                 CUSTOMER {activeSlotIdx + 1} BILL
               </span>
-              <span className="bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.2 rounded text-[10px] font-bold">
+              <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.2 rounded text-[10px] font-bold">
                 {cart.length} {cart.length === 1 ? 'ITEM' : 'ITEMS'}
               </span>
             </div>
             <div className="flex items-center space-x-2 text-[11px]">
-              <span className="text-slate-400">Total:</span>
-              <strong className="text-emerald-400 font-mono text-sm">₹{subtotal.toFixed(2)}</strong>
+              <span className="text-slate-600">Total:</span>
+              <strong className="text-emerald-700 font-mono text-sm font-extrabold">₹{subtotal.toFixed(2)}</strong>
             </div>
           </div>
 
           {/* Table Body Container */}
           <div className="flex-1 overflow-y-auto">
             {cart.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-500 p-8 space-y-2">
-                <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400">
+              <div className="h-full flex flex-col items-center justify-center text-slate-400 p-8 space-y-2">
+                <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-500">
                   <Barcode className="w-6 h-6" />
                 </div>
                 <div className="text-center font-mono">
-                  <div className="text-xs font-bold text-slate-300">काउंटर सज्ज आहे (Slot {activeSlotIdx + 1} Ready)</div>
+                  <div className="text-xs font-bold text-slate-700">काउंटर सज्ज आहे (Slot {activeSlotIdx + 1} Ready)</div>
                   <div className="text-[11px] text-slate-500 max-w-sm mt-0.5">
                     औषधाचे नाव टाईप करा (F4) किंवा बारकोड स्कॅन करा.
                   </div>
@@ -781,7 +799,7 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
             ) : (
               <table className="w-full border-collapse text-left text-xs font-mono">
                 <thead>
-                  <tr className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800 font-semibold sticky top-0 z-10">
+                  <tr className="bg-slate-100 text-slate-700 uppercase tracking-wider text-[10px] border-b border-slate-200 font-bold sticky top-0 z-10">
                     <th className="py-2 px-3 w-8 text-center">#</th>
                     <th className="py-2 px-3 min-w-[200px]">Product & Salt</th>
                     <th className="py-2 px-3 w-28">Shelf (Rack)</th>
@@ -794,45 +812,45 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                     <th className="py-2 px-3 w-8 text-center"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/80 text-[11px]">
+                <tbody className="divide-y divide-slate-100 text-[11px] text-slate-800">
                   {cart.map((item, idx) => (
                     <tr
                       key={`${item.product_id}-${item.batch_id}-${item.is_loose_tablet}`}
                       onMouseEnter={() => setFocusedProduct(item)}
-                      className="hover:bg-slate-800/60 transition-colors"
+                      className="hover:bg-slate-50 transition-colors"
                     >
-                      <td className="py-2 px-3 text-center text-slate-500 text-[10px]">{idx + 1}</td>
+                      <td className="py-2 px-3 text-center text-slate-400 text-[10px]">{idx + 1}</td>
                       <td className="py-2 px-3 font-sans">
-                        <div className="font-bold text-white leading-tight">
+                        <div className="font-bold text-slate-900 leading-tight">
                           {item.product_name}
                           {item.is_loose_tablet && (
-                            <span className="text-[9px] ml-1.5 px-1 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800">
+                            <span className="text-[9px] ml-1.5 px-1 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300">
                               Loose
                             </span>
                           )}
                         </div>
                         {item.generic_salt && (
-                          <div className="text-[10px] text-slate-400 truncate max-w-xs font-normal mt-0.5">
+                          <div className="text-[10px] text-slate-500 truncate max-w-xs font-normal mt-0.5">
                             {item.generic_salt}
                           </div>
                         )}
                       </td>
                       <td className="py-2 px-3 font-mono">
-                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 border border-slate-700 text-[10px] font-bold">
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200 text-[10px] font-bold">
                           {item.rack_location || 'Rack A-1'}
                         </span>
                       </td>
-                      <td className="py-2 px-3 font-bold text-slate-200">
+                      <td className="py-2 px-3 font-bold text-slate-800">
                         {item.batch_no}
                       </td>
-                      <td className="py-2 px-3 text-slate-300">
+                      <td className="py-2 px-3 text-slate-700">
                         {item.expiry_date}
                       </td>
                       <td className="py-2 px-3 text-center">
-                        <div className="inline-flex items-center border border-slate-700 rounded bg-slate-800 shadow-2xs">
+                        <div className="inline-flex items-center border border-slate-300 rounded bg-white shadow-2xs">
                           <button
                             onClick={() => updateCartItemQty(idx, -1)}
-                            className="px-2 py-0.5 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold"
+                            className="px-2 py-0.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 text-xs font-bold"
                           >
                             -
                           </button>
@@ -841,36 +859,36 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                             min="1"
                             value={item.qty}
                             onChange={(e) => setCartItemDirectQty(idx, e.target.value)}
-                            className="w-10 text-center text-xs font-bold text-white bg-transparent focus:outline-none"
+                            className="w-10 text-center text-xs font-bold text-slate-900 bg-transparent focus:outline-none"
                           />
                           <button
                             onClick={() => updateCartItemQty(idx, 1)}
-                            className="px-2 py-0.5 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold"
+                            className="px-2 py-0.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 text-xs font-bold"
                           >
                             +
                           </button>
                         </div>
                       </td>
-                      <td className="py-2 px-3 text-right text-slate-300">
+                      <td className="py-2 px-3 text-right text-slate-600 font-medium">
                         ₹{Number(item.unit_price).toFixed(2)}
                       </td>
-                      <td className="py-2 px-3 text-right font-bold text-emerald-400">
+                      <td className="py-2 px-3 text-right font-bold text-emerald-700">
                         ₹{Number(item.total_price).toFixed(2)}
                       </td>
                       <td className="py-2 px-3 text-center">
                         <button
                           onClick={() => openShiftItemDialog(idx)}
-                          className="px-2 py-1 rounded bg-blue-950/60 hover:bg-blue-900 text-blue-300 hover:text-white border border-blue-800/80 text-[10px] font-semibold flex items-center justify-center space-x-1 mx-auto transition-colors"
+                          className="px-2 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 hover:text-blue-900 border border-blue-200 text-[10px] font-semibold flex items-center justify-center space-x-1 mx-auto transition-colors"
                           title="Shift item to another customer bill"
                         >
-                          <ArrowRightLeft className="w-3 h-3 text-blue-400" />
+                          <ArrowRightLeft className="w-3 h-3 text-blue-600" />
                           <span>Shift</span>
                         </button>
                       </td>
                       <td className="py-2 px-3 text-center">
                         <button
                           onClick={() => removeCartItem(idx)}
-                          className="text-slate-500 hover:text-rose-400 p-1 rounded hover:bg-rose-950/40 transition-colors"
+                          className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors"
                           title="Remove item"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -885,26 +903,26 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
         </div>
 
         {/* Right Side: High-Speed Checkout Sidebar */}
-        <div className="w-80 bg-slate-950 p-3 flex flex-col justify-between overflow-y-auto shrink-0 border-l border-slate-800 space-y-3 font-mono">
+        <div className="w-80 bg-slate-50 p-3 flex flex-col justify-between overflow-y-auto shrink-0 border-l border-slate-200 space-y-3 font-mono">
           <div className="space-y-3">
             
             {/* Customer Khata & Mobile Section */}
-            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 space-y-2.5">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center justify-between">
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-2.5">
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wide flex items-center justify-between">
                 <span>Customer Details</span>
                 {existingKhataBalance !== null && (
-                  <span className="text-[10px] font-bold text-rose-300 bg-rose-950/80 px-1.5 py-0.5 rounded border border-rose-800">
+                  <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
                     Khata Due: ₹{existingKhataBalance.toFixed(2)}
                   </span>
                 )}
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 mb-0.5 block">
+                <label className="text-[10px] text-slate-600 mb-0.5 block font-medium">
                   Mobile Number (Alt+H)
                 </label>
                 <div className="relative flex items-center">
-                  <Phone className="w-3 h-3 absolute left-2.5 text-slate-500" />
+                  <Phone className="w-3 h-3 absolute left-2.5 text-slate-400" />
                   <input
                     ref={customerMobileRef}
                     type="tel"
@@ -912,13 +930,13 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                     value={customerMobile}
                     onChange={(e) => updateActiveSlot({ customerMobile: e.target.value.replace(/\D/g, '') })}
                     placeholder="10-digit mobile..."
-                    className="w-full pl-8 pr-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-xs font-mono text-white focus:border-blue-500 focus:outline-none"
+                    className="w-full pl-8 pr-2.5 py-1.5 bg-white border border-slate-300 rounded-md text-xs font-mono text-slate-900 placeholder-slate-400 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-500 focus:outline-none shadow-2xs"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 mb-0.5 block">
+                <label className="text-[10px] text-slate-600 mb-0.5 block font-medium">
                   Customer Name
                 </label>
                 <input
@@ -926,15 +944,15 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                   value={customerName}
                   onChange={(e) => updateActiveSlot({ customerName: e.target.value })}
                   placeholder="Cash Customer / Name"
-                  className="w-full px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-xs font-sans text-white focus:border-blue-500 focus:outline-none"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-md text-xs font-sans text-slate-900 placeholder-slate-400 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-500 focus:outline-none shadow-2xs"
                 />
               </div>
 
               {/* Schedule H1 Doctor fields if required */}
               {cart.some((it) => it.is_schedule_h1 === 1) && (
-                <div className="pt-2 border-t border-slate-800 space-y-2">
-                  <div className="text-[10px] font-bold text-rose-400 uppercase flex items-center space-x-1">
-                    <AlertTriangle className="w-3 h-3 text-rose-500" />
+                <div className="pt-2 border-t border-slate-200 space-y-2">
+                  <div className="text-[10px] font-bold text-rose-700 uppercase flex items-center space-x-1">
+                    <AlertTriangle className="w-3 h-3 text-rose-600" />
                     <span>FDA Schedule H1 Active</span>
                   </div>
                   <input
@@ -942,24 +960,24 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                     value={doctorName}
                     onChange={(e) => updateActiveSlot({ doctorName: e.target.value })}
                     placeholder="Prescribing Doctor Name..."
-                    className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-white"
+                    className="w-full px-2 py-1 bg-white border border-slate-300 rounded text-xs text-slate-900 placeholder-slate-400 focus:border-emerald-600"
                   />
                   <input
                     type="text"
                     value={doctorRegNo}
                     onChange={(e) => updateActiveSlot({ doctorRegNo: e.target.value })}
                     placeholder="Doctor Reg No (MMC)..."
-                    className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-white"
+                    className="w-full px-2 py-1 bg-white border border-slate-300 rounded text-xs text-slate-900 placeholder-slate-400 focus:border-emerald-600"
                   />
                 </div>
               )}
             </div>
 
             {/* Payment Mode Selector (F8 / Alt+P) */}
-            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 space-y-2">
-              <div className="text-[10px] font-bold text-slate-400 uppercase flex items-center justify-between">
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-2">
+              <div className="text-[10px] font-bold text-slate-500 uppercase flex items-center justify-between">
                 <span>Payment Mode (F8)</span>
-                <span className="text-[10px] text-blue-400 font-bold uppercase">{paymentMode}</span>
+                <span className="text-[10px] text-emerald-700 font-bold uppercase">{paymentMode}</span>
               </div>
               <div className="grid grid-cols-2 gap-1.5">
                 {['cash', 'upi', 'khata', 'card'].map((mode) => (
@@ -968,8 +986,8 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                     onClick={() => updateActiveSlot({ paymentMode: mode })}
                     className={`py-1.5 px-2 rounded-lg text-xs font-bold uppercase transition-all ${
                       paymentMode === mode
-                        ? 'bg-blue-600 text-white shadow-sm ring-1 ring-blue-400'
-                        : 'bg-slate-800 text-slate-400 hover:bg-slate-750'
+                        ? 'bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-500'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 font-semibold'
                     }`}
                   >
                     {mode}
@@ -979,25 +997,25 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
             </div>
 
             {/* Discount input */}
-            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
-              <span className="text-xs text-slate-400">Discount (₹):</span>
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between">
+              <span className="text-xs text-slate-600 font-medium">Discount (₹):</span>
               <input
                 type="number"
                 min="0"
                 step="1"
                 value={discount}
                 onChange={(e) => handleDiscountChange(e.target.value)}
-                className="w-24 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-right text-xs font-bold text-amber-400 focus:outline-none"
+                className="w-24 px-2 py-1 bg-white border border-slate-300 rounded text-right text-xs font-bold text-slate-900 focus:border-emerald-600 focus:outline-none"
               />
             </div>
 
           </div>
 
           {/* Bottom Checkout Button & Total */}
-          <div className="space-y-2.5 pt-2 border-t border-slate-800">
-            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 text-right">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Net Payable</span>
-              <span className="text-2xl font-black text-emerald-400 font-mono tracking-tight">
+          <div className="space-y-2.5 pt-2 border-t border-slate-200">
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs text-right">
+              <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-bold">Net Payable</span>
+              <span className="text-2xl font-black text-emerald-700 font-mono tracking-tight">
                 ₹{netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </span>
             </div>
@@ -1007,8 +1025,8 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
               disabled={cart.length === 0}
               className={`w-full py-3 px-4 rounded-xl font-bold text-xs font-mono uppercase tracking-wider flex items-center justify-center space-x-2 transition-all ${
                 cart.length === 0
-                  ? 'bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-800'
-                  : 'bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white shadow-lg shadow-emerald-950/60'
+                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-200'
+                  : 'bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white shadow-md shadow-emerald-600/30'
               }`}
             >
               <span>बिल पूर्ण करा (F9 / Ctrl+Enter)</span>
@@ -1021,29 +1039,29 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
       </div>
 
       {/* 4. LIVE BOTTOM INSPECTOR PANEL (Photo 23) */}
-      <div className="bg-slate-950 border-t border-slate-800 px-4 py-2 text-xs text-slate-300 flex items-center justify-between font-mono shrink-0 select-none">
+      <div className="bg-white border-t border-slate-200 px-4 py-2 text-xs text-slate-700 flex items-center justify-between font-mono shrink-0 select-none shadow-2xs">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 flex-1">
           <div>
-            <span className="text-[10px] text-slate-500 block uppercase">Drug (Generic Salt)</span>
-            <span className="font-semibold text-white truncate block max-w-xs text-xs">
+            <span className="text-[10px] text-slate-400 block uppercase font-medium">Drug (Generic Salt)</span>
+            <span className="font-bold text-slate-900 truncate block max-w-xs text-xs">
               {inspectorData.drug}
             </span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 block uppercase">Shelf (Rack Location)</span>
-            <span className="font-bold text-amber-400 block text-xs">
+            <span className="text-[10px] text-slate-400 block uppercase font-medium">Shelf (Rack Location)</span>
+            <span className="font-bold text-amber-700 block text-xs">
               {inspectorData.shelf}
             </span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 block uppercase">Company / Pack</span>
-            <span className="text-slate-200 block text-xs">
+            <span className="text-[10px] text-slate-400 block uppercase font-medium">Company / Pack</span>
+            <span className="text-slate-700 block text-xs">
               {inspectorData.comp} ({inspectorData.pack})
             </span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 block uppercase">Stock (Batch / Total)</span>
-            <span className="font-bold text-emerald-400 block text-xs">
+            <span className="text-[10px] text-slate-400 block uppercase font-medium">Stock (Batch / Total)</span>
+            <span className="font-bold text-emerald-700 block text-xs">
               Batch: {inspectorData.batchQty} | Total: {inspectorData.totalQty}
             </span>
           </div>
@@ -1051,9 +1069,9 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
       </div>
 
       {/* 5. LIVE EXPIRY & RACK ALERT TICKER (Photos 1, 3, 7, 23) */}
-      <div className="bg-slate-950 border-t border-slate-850 px-4 py-1 text-[11px] font-mono text-slate-400 flex items-center overflow-hidden shrink-0 select-none">
-        <span className="text-rose-400 font-bold flex items-center space-x-1 shrink-0 mr-3">
-          <AlertTriangle className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
+      <div className="bg-slate-50 border-t border-slate-200 px-4 py-1 text-[11px] font-mono text-slate-600 flex items-center overflow-hidden shrink-0 select-none">
+        <span className="text-rose-700 font-bold flex items-center space-x-1 shrink-0 mr-3">
+          <AlertTriangle className="w-3.5 h-3.5 text-rose-600 animate-pulse" />
           <span>EXPIRY TICKER :</span>
         </span>
         <div className="overflow-hidden whitespace-nowrap flex-1">
@@ -1061,30 +1079,30 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
             {expiryTickerItems.length > 0 ? (
               expiryTickerItems.map((item, idx) => (
                 <span key={idx} className="mr-6 inline-flex items-center space-x-1.5">
-                  <span className="text-white font-bold">{item.product_name}</span>
-                  <span className="text-amber-400">[Shelf: {item.rack_location || 'Rack A-1'}]</span>
-                  <span className="text-rose-400 font-semibold">Exp: {item.expiry_date}</span>
-                  <span className="text-slate-400">(Qty: {item.stock_qty})</span>
-                  <span className="text-slate-600">•</span>
+                  <span className="text-slate-900 font-bold">{item.product_name}</span>
+                  <span className="text-amber-700 font-semibold">[Shelf: {item.rack_location || 'Rack A-1'}]</span>
+                  <span className="text-rose-700 font-semibold">Exp: {item.expiry_date}</span>
+                  <span className="text-slate-600">(Qty: {item.stock_qty})</span>
+                  <span className="text-slate-400">•</span>
                 </span>
               ))
             ) : (
-              <span className="text-slate-500">कोणतेही औषध पुढील ३० दिवसात मुदत संपत नाही (All stock safe)</span>
+              <span className="text-slate-500 font-medium">कोणतेही औषध पुढील ३० दिवसात मुदत संपत नाही (All stock safe)</span>
             )}
           </div>
         </div>
       </div>
 
       {/* 6. BOTTOM FUNCTION KEYS BAR */}
-      <div className="bg-slate-900 border-t border-slate-800 px-4 py-1.5 flex items-center justify-between text-[11px] font-mono text-slate-400 shrink-0 select-none">
+      <div className="bg-white border-t border-slate-200 px-4 py-1.5 flex items-center justify-between text-[11px] font-mono text-slate-600 shrink-0 select-none">
         <div className="flex items-center space-x-3 overflow-x-auto">
-          <span><kbd className="bg-slate-800 px-1 py-0.5 rounded text-white font-bold border border-slate-700">F2</kbd> New Bill</span>
-          <span><kbd className="bg-slate-800 px-1 py-0.5 rounded text-white font-bold border border-slate-700">F4</kbd> Search</span>
-          <span><kbd className="bg-slate-800 px-1 py-0.5 rounded text-white font-bold border border-slate-700">Alt+1..0</kbd> Slots 1-10</span>
-          <span><kbd className="bg-slate-800 px-1 py-0.5 rounded text-white font-bold border border-slate-700">F8</kbd> Mode ({paymentMode.toUpperCase()})</span>
-          <span><kbd className="bg-slate-800 px-1 py-0.5 rounded text-white font-bold border border-slate-700">F9</kbd> Complete (Enter)</span>
+          <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">F2</kbd> New Bill</span>
+          <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">F4</kbd> Search</span>
+          <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">Alt+1..0</kbd> Slots 1-10</span>
+          <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">F8</kbd> Mode ({paymentMode.toUpperCase()})</span>
+          <span><kbd className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-300 shadow-2xs">F9</kbd> Complete (Enter)</span>
         </div>
-        <div className="text-[10px] text-emerald-400 font-semibold hidden sm:inline">
+        <div className="text-[10px] text-emerald-700 font-bold hidden sm:inline">
           ⚡ 100% Zero-Mouse Counter
         </div>
       </div>
@@ -1093,21 +1111,21 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
       {/* MediVision Stage 2: "Available Stock" Dedicated Batch Selection Pop-up (Photos 11 & 12) */}
       {batchSelectModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[85vh] text-slate-100 font-mono animate-in zoom-in-95">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[85vh] text-slate-900 font-mono animate-in zoom-in-95">
             
             {/* Header */}
-            <div className="px-5 py-3 bg-gradient-to-r from-blue-900/80 to-slate-900 border-b border-blue-800/60 flex items-center justify-between">
+            <div className="px-5 py-3 bg-gradient-to-r from-emerald-600 to-teal-700 text-white flex items-center justify-between shadow-sm">
               <div>
                 <h3 className="text-sm font-bold text-white tracking-wide">
                   Available Stock of {batchSelectModal.product.name} ({batchSelectModal.product.strip_size || 10} TAB)
                 </h3>
-                <p className="text-xs text-blue-300 font-mono mt-0.5">
+                <p className="text-xs text-emerald-100 font-mono mt-0.5">
                   Stockist : {batchSelectModal.product.stockist_name || 'KACHOLIYA MEDICAL AGEN'} • Rack: {batchSelectModal.product.rack_location || 'General'}
                 </p>
               </div>
-              <div className="text-right text-xs text-slate-400 font-mono">
-                <span className="bg-blue-950 px-2.5 py-1 rounded text-blue-300 border border-blue-800/60 font-bold">
+              <div className="text-right text-xs text-slate-200 font-mono">
+                <span className="bg-emerald-800/80 px-2.5 py-1 rounded text-white border border-emerald-500 font-bold">
                   {batchSelectModal.batches.length} Batches in Stock
                 </span>
               </div>
@@ -1117,7 +1135,7 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
             <div className="overflow-y-auto flex-1 p-3">
               <table className="w-full text-left text-xs font-mono border-collapse">
                 <thead>
-                  <tr className="bg-slate-800/80 text-amber-300 text-[11px] uppercase tracking-wider border-b border-slate-700">
+                  <tr className="bg-slate-100 text-slate-700 text-[11px] uppercase tracking-wider border-b border-slate-200 font-bold">
                     <th className="py-2 px-3">Batch</th>
                     <th className="py-2 px-3">Exp.Date</th>
                     <th className="py-2 px-3">Doc. No.</th>
@@ -1125,10 +1143,10 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                     <th className="py-2 px-3 text-right">Pur.Rate</th>
                     <th className="py-2 px-3 text-right">MRP</th>
                     <th className="py-2 px-3 text-right">Rate</th>
-                    <th className="py-2 px-3 text-center font-bold text-emerald-400">Available Qty</th>
+                    <th className="py-2 px-3 text-center font-bold text-emerald-700">Available Qty</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800 text-[11px]">
+                <tbody className="divide-y divide-slate-100 text-[11px] text-slate-800">
                   {batchSelectModal.batches.map((b, idx) => {
                     const isSelected = batchSelectModal.selectedIndex === idx;
                     const isNearExpiry = b.expiry_date === '10/26' || b.expiry_date === '11/26' || b.status === 'critical';
@@ -1138,24 +1156,24 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                         onClick={() => setBatchSelectModal(prev => ({ ...prev, selectedIndex: idx }))}
                         className={`cursor-pointer transition-colors ${
                           isSelected
-                            ? 'bg-blue-600 text-white font-bold ring-2 ring-blue-400 shadow-md'
+                            ? 'bg-emerald-600 text-white font-bold ring-2 ring-emerald-500 shadow-sm'
                             : isNearExpiry
-                              ? 'bg-rose-950/40 text-rose-200 hover:bg-rose-950/60'
-                              : 'hover:bg-slate-800/70 text-slate-200'
+                              ? 'bg-rose-50 text-rose-900 hover:bg-rose-100'
+                              : 'hover:bg-slate-50 text-slate-800'
                         }`}
                       >
                         <td className="py-2.5 px-3 font-bold">{b.batch_no}</td>
                         <td className="py-2.5 px-3">
-                          <span className={isNearExpiry ? 'text-rose-400 font-bold' : ''}>
+                          <span className={isNearExpiry && !isSelected ? 'text-rose-700 font-bold' : ''}>
                             {b.expiry_date}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-slate-400">{b.doc_no || 'CR/' + (5000 + (b.id || 1) * 19)}</td>
-                        <td className="py-2.5 px-3 text-slate-400">{b.doc_date || '20/06/2026'}</td>
+                        <td className={`py-2.5 px-3 ${isSelected ? 'text-emerald-100' : 'text-slate-500'}`}>{b.doc_no || 'CR/' + (5000 + (b.id || 1) * 19)}</td>
+                        <td className={`py-2.5 px-3 ${isSelected ? 'text-emerald-100' : 'text-slate-500'}`}>{b.doc_date || '20/06/2026'}</td>
                         <td className="py-2.5 px-3 text-right">₹{Number(b.purchase_rate || b.mrp * 0.7).toFixed(2)}</td>
                         <td className="py-2.5 px-3 text-right">₹{Number(b.mrp).toFixed(2)}</td>
                         <td className="py-2.5 px-3 text-right">₹{Number(b.mrp).toFixed(2)}</td>
-                        <td className="py-2.5 px-3 text-center font-bold text-emerald-400">
+                        <td className={`py-2.5 px-3 text-center font-bold ${isSelected ? 'text-white' : 'text-emerald-700'}`}>
                           {b.stock_qty}
                         </td>
                       </tr>
@@ -1166,9 +1184,9 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
             </div>
 
             {/* Bottom Quantity Input & Hotkeys */}
-            <div className="p-3 bg-slate-950 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="p-3 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
               <div className="flex items-center space-x-3 w-full sm:w-auto">
-                <label className="font-bold text-slate-300">विक्री नग (Qty):</label>
+                <label className="font-bold text-slate-700">विक्री नग (Qty):</label>
                 <input
                   ref={batchQtyInputRef}
                   type="number"
@@ -1198,16 +1216,16 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                       }));
                     }
                   }}
-                  className="w-20 px-2 py-1 bg-slate-800 border border-blue-500 rounded text-center text-sm font-bold text-white focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                  className="w-20 px-2 py-1 bg-white border border-emerald-500 rounded text-center text-sm font-bold text-slate-900 focus:ring-2 focus:ring-emerald-400 focus:outline-none shadow-2xs"
                   autoFocus
                 />
                 {allowLooseTablets && batchSelectModal.product.category === 'medicine' && batchSelectModal.product.strip_size > 1 && (
-                  <label className="flex items-center space-x-1.5 text-slate-400 text-xs cursor-pointer ml-3">
+                  <label className="flex items-center space-x-1.5 text-slate-700 text-xs cursor-pointer ml-3 font-medium">
                     <input
                       type="checkbox"
                       checked={batchSelectModal.isLoose}
                       onChange={(e) => setBatchSelectModal(prev => ({ ...prev, isLoose: e.target.checked }))}
-                      className="rounded border-slate-700 text-emerald-500"
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
                     />
                     <span>Loose Tabs (सुट्या गोळ्या)</span>
                   </label>
@@ -1220,13 +1238,13 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                     setBatchSelectModal(null);
                     searchInputRef.current?.focus();
                   }}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-semibold"
+                  className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded text-xs font-semibold shadow-2xs transition-colors"
                 >
                   रद्द करा (Esc)
                 </button>
                 <button
                   onClick={confirmBatchSelection}
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold shadow-md flex items-center space-x-1"
+                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold shadow-sm flex items-center space-x-1 transition-colors"
                 >
                   <span>बिलामध्ये जोडा (Enter)</span>
                 </button>
@@ -1239,22 +1257,22 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
       {/* MediVision Multi-Bill Item Shift Modal (Photo 22: "Shift Item?") */}
       {shiftItemModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden text-slate-100 font-mono animate-in zoom-in-95">
-            <div className="px-4 py-2.5 bg-blue-900/50 border-b border-blue-800/60 text-xs font-bold text-blue-200 flex items-center space-x-2">
-              <ArrowRightLeft className="w-4 h-4 text-amber-400" />
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-xl shadow-2xl w-full max-w-md overflow-hidden text-slate-900 font-mono animate-in zoom-in-95">
+            <div className="px-4 py-2.5 bg-blue-50 border-b border-blue-200 text-xs font-bold text-blue-900 flex items-center space-x-2">
+              <ArrowRightLeft className="w-4 h-4 text-blue-600" />
               <span>Shift Item?</span>
             </div>
             <div className="p-5 space-y-4">
               <div className="flex items-start space-x-3">
-                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                 <div className="space-y-1">
-                  <p className="text-sm font-medium text-white leading-relaxed">
+                  <p className="text-sm font-medium text-slate-800 leading-relaxed">
                     Do you want to add this item to the list of customer{' '}
                     <select
                       value={shiftItemModal.targetSlot}
                       onChange={(e) => setShiftItemModal(prev => ({ ...prev, targetSlot: Number(e.target.value) }))}
-                      className="bg-slate-800 border border-slate-600 rounded px-2 py-0.5 text-xs text-white font-mono mx-1 focus:border-blue-500"
+                      className="bg-white border border-slate-300 rounded px-2 py-0.5 text-xs text-slate-900 font-mono mx-1 focus:border-blue-500 shadow-2xs"
                     >
                       {slots.map((s, idx) => (
                         idx !== activeSlotIdx && (
@@ -1266,8 +1284,8 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                     </select>{' '}
                     from the list of customer {activeSlotIdx + 1}?
                   </p>
-                  <p className="text-xs text-slate-400 pt-1">
-                    Item: <strong className="text-amber-300">{cart[shiftItemModal.itemIndex]?.product_name}</strong> (Qty: {cart[shiftItemModal.itemIndex]?.qty})
+                  <p className="text-xs text-slate-500 pt-1">
+                    Item: <strong className="text-amber-800">{cart[shiftItemModal.itemIndex]?.product_name}</strong> (Qty: {cart[shiftItemModal.itemIndex]?.qty})
                   </p>
                 </div>
               </div>
@@ -1275,13 +1293,13 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
               <div className="flex justify-end space-x-2 pt-2">
                 <button
                   onClick={() => setShiftItemModal(null)}
-                  className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-semibold"
+                  className="px-4 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded text-xs font-semibold shadow-2xs transition-colors"
                 >
                   No (Esc)
                 </button>
                 <button
                   onClick={confirmShiftItem}
-                  className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded text-xs font-bold shadow-md"
+                  className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs font-bold shadow-sm transition-colors"
                   autoFocus
                 >
                   Yes (Enter)
@@ -1294,26 +1312,26 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
       {/* Salt Substitutes Modal */}
       {substitutesModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 rounded-xl shadow-2xl border border-slate-700 w-full max-w-lg p-5 space-y-3 font-mono text-slate-100 animate-in zoom-in-95">
-            <div className="flex justify-between items-start border-b border-slate-800 pb-2.5">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg p-5 space-y-3 font-mono text-slate-900 animate-in zoom-in-95">
+            <div className="flex justify-between items-start border-b border-slate-200 pb-2.5">
               <div>
-                <h3 className="font-bold text-sm text-white">
+                <h3 className="font-bold text-sm text-slate-900">
                   Salt Substitutes: {substitutesModal.original.name}
                 </h3>
-                <p className="text-[11px] text-slate-400 mt-0.5">
+                <p className="text-[11px] text-slate-500 mt-0.5">
                   Composition: {substitutesModal.original.generic_salt}
                 </p>
               </div>
               <button
                 onClick={() => setSubstitutesModal(null)}
-                className="text-slate-400 hover:text-white text-sm font-semibold"
+                className="text-slate-400 hover:text-slate-700 text-sm font-semibold p-1"
               >
                 ✕
               </button>
             </div>
 
-            <div className="divide-y divide-slate-800 max-h-72 overflow-y-auto">
+            <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
               {substitutesModal.substitutes.length === 0 ? (
                 <div className="py-8 text-center text-xs text-slate-500">
                   समान घटक असलेले इतर कोणतेही औषध उपलब्ध नाही.
@@ -1322,15 +1340,15 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                 substitutesModal.substitutes.map((sub) => (
                   <div
                     key={sub.id}
-                    className="py-2.5 flex items-center justify-between hover:bg-slate-800/60 px-2 rounded-md"
+                    className="py-2.5 flex items-center justify-between hover:bg-slate-50 px-2 rounded-md transition-colors"
                   >
                     <div>
-                      <div className="font-bold text-xs text-white">{sub.name}</div>
-                      <div className="text-[10px] text-slate-400 flex items-center gap-2 mt-0.5">
-                        <span className="text-amber-300 font-bold">
+                      <div className="font-bold text-xs text-slate-900">{sub.name}</div>
+                      <div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5">
+                        <span className="text-amber-800 font-bold">
                           Rack: {sub.rack_location || 'Rack A-1'}
                         </span>
-                        <span className="text-emerald-400 font-bold">
+                        <span className="text-emerald-700 font-bold">
                           In Stock: {sub.total_stock}
                         </span>
                       </div>
@@ -1340,7 +1358,7 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
                         openBatchSelectionModal(sub);
                         setSubstitutesModal(null);
                       }}
-                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold"
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold shadow-2xs transition-colors"
                     >
                       Select Brand
                     </button>
@@ -1349,10 +1367,10 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
               )}
             </div>
 
-            <div className="text-right pt-2 border-t border-slate-800">
+            <div className="text-right pt-2 border-t border-slate-200">
               <button
                 onClick={() => setSubstitutesModal(null)}
-                className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-xs font-medium"
+                className="px-3.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-md text-xs font-medium shadow-2xs transition-colors"
               >
                 Dismiss
               </button>
@@ -1377,11 +1395,11 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
       {/* Shortage Quick Notification Toast */}
       {shortageToast && (
-        <div className="fixed bottom-12 right-6 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-2xl border border-amber-500/50 flex items-center space-x-2.5 animate-in slide-in-from-bottom duration-200 font-mono">
-          <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+        <div className="fixed bottom-12 right-6 z-50 bg-white text-slate-900 px-4 py-2.5 rounded-xl shadow-2xl border border-amber-400 flex items-center space-x-2.5 animate-in slide-in-from-bottom duration-200 font-mono">
+          <div className="w-6 h-6 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
             <Check className="w-4 h-4" />
           </div>
-          <span className="text-xs font-medium text-amber-200">{shortageToast}</span>
+          <span className="text-xs font-bold text-amber-900">{shortageToast}</span>
         </div>
       )}
 

@@ -78,18 +78,18 @@ export default function LicenseActivationModal({ licenseStatus, onActivationSucc
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 select-none">
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
         {/* Header */}
-        <div className="bg-slate-900 text-white p-5 border-b border-slate-800 flex items-center justify-between">
+        <div className="bg-white text-slate-900 p-5 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
-            <div className="w-9 h-9 rounded-lg bg-emerald-600/90 border border-emerald-500/40 flex items-center justify-center">
-              <Key className="w-4 h-4 text-white" />
+            <div className="w-9 h-9 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700">
+              <Key className="w-4 h-4 text-emerald-700" />
             </div>
             <div>
-              <h3 className="font-bold text-sm">GaavPharma Subscription & License</h3>
-              <p className="text-[11px] text-slate-400">Offline Cryptographic Licensing System</p>
+              <h3 className="font-bold text-sm text-slate-900">GaavPharma Subscription & License</h3>
+              <p className="text-[11px] text-slate-500">Offline Cryptographic Licensing System</p>
             </div>
           </div>
           {onClose && (
-            <button onClick={onClose} className="text-slate-400 hover:text-white text-sm font-semibold">
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-sm font-semibold p-1">
               ✕
             </button>
           )}

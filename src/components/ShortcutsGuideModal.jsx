@@ -66,47 +66,47 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md select-none animate-fadeIn">
-      <div className="relative w-full max-w-3xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl shadow-emerald-950/40 overflow-hidden text-slate-100 flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md select-none animate-fadeIn">
+      <div className="relative w-full max-w-3xl bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden text-slate-900 flex flex-col max-h-[90vh]">
         
         {/* Top Header Glow */}
         <div className="h-1.5 bg-gradient-to-r from-emerald-500 via-teal-400 to-indigo-500"></div>
 
         {/* Modal Header */}
-        <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+        <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-white">
           <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400">
+            <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700">
               <Keyboard className="w-6 h-6" />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="text-lg font-bold text-white tracking-tight">
+                <h3 className="text-lg font-bold text-slate-900 tracking-tight">
                   कीबोर्ड शॉर्टकट कीज मार्गदर्शक (Keyboard Shortcuts)
                 </h3>
-                <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 rounded-full font-mono">
+                <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-full font-mono">
                   HOTKEYS
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 mt-0.5">
                 माऊस न वापरता संपूर्ण काऊंटर बिलिंग व नेव्हिगेशन वीजवेगाने हाताळा (MediVision पेक्षा जलद)
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+        <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs bg-slate-50/50">
           
           {/* Section 1: Billing Counter */}
           <div className="space-y-3">
-            <div className="flex items-center space-x-2 text-emerald-400 font-bold uppercase tracking-wider text-[11px]">
-              <Zap className="w-4 h-4" />
+            <div className="flex items-center space-x-2 text-emerald-700 font-bold uppercase tracking-wider text-[11px]">
+              <Zap className="w-4 h-4 text-emerald-600" />
               <span>१. काऊंटर बिलिंग जलद शॉर्टकट्स (Billing Counter Hotkeys)</span>
             </div>
             
@@ -114,18 +114,18 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
               {billingShortcuts.map((item, idx) => (
                 <div
                   key={idx}
-                  className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-start justify-between gap-3 hover:border-emerald-500/40 transition-colors"
+                  className="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs flex items-start justify-between gap-3 hover:border-emerald-500/60 transition-colors"
                 >
                   <div className="space-y-0.5">
-                    <div className="font-semibold text-white text-xs">{item.label}</div>
-                    <div className="text-[11px] text-slate-400">{item.desc}</div>
+                    <div className="font-bold text-slate-900 text-xs">{item.label}</div>
+                    <div className="text-[11px] text-slate-500">{item.desc}</div>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
-                    <kbd className="px-2 py-1 rounded bg-slate-900 border border-slate-600 text-emerald-300 font-mono font-bold text-xs shadow-xs">
+                    <kbd className="px-2 py-1 rounded bg-slate-100 border border-slate-300 text-emerald-700 font-mono font-bold text-xs shadow-2xs">
                       {item.key}
                     </kbd>
                     {item.alt && (
-                      <span className="text-[9px] text-slate-500 font-mono">{item.alt}</span>
+                      <span className="text-[9px] text-slate-400 font-mono">{item.alt}</span>
                     )}
                   </div>
                 </div>
@@ -134,9 +134,9 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
           </div>
 
           {/* Section 2: MediVision Accounting Vouchers */}
-          <div className="space-y-3 pt-2 border-t border-slate-800">
-            <div className="flex items-center space-x-2 text-blue-400 font-bold uppercase tracking-wider text-[11px]">
-              <FileText className="w-4 h-4" />
+          <div className="space-y-3 pt-2 border-t border-slate-200">
+            <div className="flex items-center space-x-2 text-blue-700 font-bold uppercase tracking-wider text-[11px]">
+              <FileText className="w-4 h-4 text-blue-600" />
               <span>२. कॅशबुक, लेजर व व्हाउचर नोंद (MediVision Accounting Vouchers)</span>
             </div>
             
@@ -144,13 +144,13 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
               {accountingShortcuts.map((item, idx) => (
                 <div
                   key={idx}
-                  className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-start justify-between gap-3 hover:border-blue-500/40 transition-colors"
+                  className="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs flex items-start justify-between gap-3 hover:border-blue-500/60 transition-colors"
                 >
                   <div className="space-y-0.5">
-                    <div className="font-semibold text-white text-xs">{item.label}</div>
-                    <div className="text-[11px] text-slate-400">{item.desc}</div>
+                    <div className="font-bold text-slate-900 text-xs">{item.label}</div>
+                    <div className="text-[11px] text-slate-500">{item.desc}</div>
                   </div>
-                  <kbd className="px-2 py-1 rounded bg-slate-900 border border-slate-600 text-blue-300 font-mono font-bold text-xs shadow-xs shrink-0">
+                  <kbd className="px-2 py-1 rounded bg-slate-100 border border-slate-300 text-blue-700 font-mono font-bold text-xs shadow-2xs shrink-0">
                     {item.key}
                   </kbd>
                 </div>
@@ -159,9 +159,9 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
           </div>
 
           {/* Section 3: Navigation */}
-          <div className="space-y-3 pt-2 border-t border-slate-800">
-            <div className="flex items-center space-x-2 text-indigo-400 font-bold uppercase tracking-wider text-[11px]">
-              <Navigation className="w-4 h-4" />
+          <div className="space-y-3 pt-2 border-t border-slate-200">
+            <div className="flex items-center space-x-2 text-indigo-700 font-bold uppercase tracking-wider text-[11px]">
+              <Navigation className="w-4 h-4 text-indigo-600" />
               <span>३. स्क्रीन व मॉड्यूल नेव्हिगेशन (Module Navigation)</span>
             </div>
             
@@ -169,13 +169,13 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
               {navigationShortcuts.map((item, idx) => (
                 <div
                   key={idx}
-                  className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-start justify-between gap-3 hover:border-indigo-500/40 transition-colors"
+                  className="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs flex items-start justify-between gap-3 hover:border-indigo-500/60 transition-colors"
                 >
                   <div className="space-y-0.5">
-                    <div className="font-semibold text-white text-xs">{item.label}</div>
-                    <div className="text-[11px] text-slate-400">{item.desc}</div>
+                    <div className="font-bold text-slate-900 text-xs">{item.label}</div>
+                    <div className="text-[11px] text-slate-500">{item.desc}</div>
                   </div>
-                  <kbd className="px-2 py-1 rounded bg-slate-900 border border-slate-600 text-indigo-300 font-mono font-bold text-xs shadow-xs shrink-0">
+                  <kbd className="px-2 py-1 rounded bg-slate-100 border border-slate-300 text-indigo-700 font-mono font-bold text-xs shadow-2xs shrink-0">
                     {item.key}
                   </kbd>
                 </div>
@@ -184,9 +184,9 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
           </div>
 
           {/* Section 4: Safety & System */}
-          <div className="space-y-3 pt-2 border-t border-slate-800">
-            <div className="flex items-center space-x-2 text-teal-400 font-bold uppercase tracking-wider text-[11px]">
-              <Shield className="w-4 h-4" />
+          <div className="space-y-3 pt-2 border-t border-slate-200">
+            <div className="flex items-center space-x-2 text-teal-700 font-bold uppercase tracking-wider text-[11px]">
+              <Shield className="w-4 h-4 text-teal-600" />
               <span>४. डेटा सुरक्षा व सिस्टम (Safety & System)</span>
             </div>
             
@@ -194,13 +194,13 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
               {systemShortcuts.map((item, idx) => (
                 <div
                   key={idx}
-                  className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-start justify-between gap-3 hover:border-teal-500/40 transition-colors"
+                  className="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs flex items-start justify-between gap-3 hover:border-teal-500/60 transition-colors"
                 >
                   <div className="space-y-0.5">
-                    <div className="font-semibold text-white text-xs">{item.label}</div>
-                    <div className="text-[11px] text-slate-400">{item.desc}</div>
+                    <div className="font-bold text-slate-900 text-xs">{item.label}</div>
+                    <div className="text-[11px] text-slate-500">{item.desc}</div>
                   </div>
-                  <kbd className="px-2 py-1 rounded bg-slate-900 border border-slate-600 text-teal-300 font-mono font-bold text-xs shadow-xs shrink-0">
+                  <kbd className="px-2 py-1 rounded bg-slate-100 border border-slate-300 text-teal-700 font-mono font-bold text-xs shadow-2xs shrink-0">
                     {item.key}
                   </kbd>
                 </div>
@@ -211,11 +211,11 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
-          <span>टीप: कोणत्याही स्क्रीनवर <kbd className="font-mono bg-slate-800 px-1.5 py-0.5 rounded text-white">F1</kbd> दाबून हे मार्गदर्शक पुन्हा उघडू शकता.</span>
+        <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+          <span>टीप: कोणत्याही स्क्रीनवर <kbd className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 border border-slate-300">F1</kbd> दाबून हे मार्गदर्शक पुन्हा उघडू शकता.</span>
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl transition-colors shadow-sm"
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl transition-colors shadow-xs"
           >
             समजले (Close)
           </button>
