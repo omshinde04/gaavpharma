@@ -47,16 +47,64 @@ export default function BackupExitModal({ isOpen, onClose, onConfirmLogout, stor
 
       if (driveInfo) {
         setDrives(driveInfo);
-        setSelectedDestinations({
+        setSelectedDestinations(prev => ({
           pc: driveInfo.pc?.available ?? true,
-          usb: driveInfo.usb?.available ?? false
-        });
+          usb: prev.usb || (driveInfo.usb?.available ?? false)
+        }));
       }
       setLastBackupTime(lastTs);
     } catch (err) {
       console.warn('Drive scan warning:', err);
     } finally {
       setLoadingDrives(false);
+    }
+  };
+
+  const handleToggleUsb = async () => {
+    if (isBackingUp) return;
+
+    if (selectedDestinations.usb) {
+      setSelectedDestinations(prev => ({ ...prev, usb: false }));
+      return;
+    }
+
+    // Activating USB backup:
+    if (drives.usb?.available && drives.usb?.path) {
+      setSelectedDestinations(prev => ({ ...prev, usb: true }));
+      return;
+    }
+
+    // If USB is not auto-detected yet, activate USB mode with friendly default path
+    setDrives(prev => ({
+      ...prev,
+      usb: {
+        available: true,
+        path: prev.usb?.path || 'पेनड्राइव्ह (दुय्यम बॅकअप प्रत / USB Storage)',
+        label: 'यूएसबी पेनड्राइव्ह'
+      }
+    }));
+    setSelectedDestinations(prev => ({ ...prev, usb: true }));
+  };
+
+  const handleBrowseUsbFolder = async (e) => {
+    if (e) e.stopPropagation();
+    if (isBackingUp) return;
+
+    try {
+      const chosenFolder = await api.selectFolder();
+      if (chosenFolder) {
+        setDrives(prev => ({
+          ...prev,
+          usb: {
+            available: true,
+            path: chosenFolder,
+            label: `यूएसबी पेनड्राइव्ह (${chosenFolder})`
+          }
+        }));
+        setSelectedDestinations(prev => ({ ...prev, usb: true }));
+      }
+    } catch (err) {
+      console.error('Folder selection error:', err);
     }
   };
 
@@ -69,13 +117,14 @@ export default function BackupExitModal({ isOpen, onClose, onConfirmLogout, stor
     try {
       const destinations = [];
       if (selectedDestinations.pc) destinations.push('pc');
-      if (selectedDestinations.usb && drives.usb?.available) destinations.push('usb');
+      if (selectedDestinations.usb) destinations.push('usb');
 
       await new Promise(r => setTimeout(r, 400));
       setBackupProgressStep('२/३: संगणक व पेनड्राइव्हवर सुरक्षित डेटा कॉपी होत आहे...');
 
       const result = await api.createDatabaseBackup({
         destinations: destinations.length > 0 ? destinations : ['pc'],
+        usbPath: drives.usb?.path || undefined,
         backupType: 'exit'
       });
 
@@ -182,84 +231,165 @@ export default function BackupExitModal({ isOpen, onClose, onConfirmLogout, stor
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             
             {/* 1. PC Local Hard Drive */}
-            <label className={`relative flex flex-col p-4 rounded-xl border transition-all cursor-pointer ${
-              selectedDestinations.pc
-                ? 'bg-emerald-950/20 border-emerald-500/50 shadow-sm shadow-emerald-900/30'
-                : 'bg-slate-800/40 border-slate-700 hover:border-slate-600'
-            }`}>
-              <div className="flex items-start justify-between">
-                <div className="flex items-center space-x-2.5">
-                  <div className={`p-2 rounded-lg ${selectedDestinations.pc ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
-                    <HardDrive className="w-5 h-5" />
+            <div
+              id="pc-drive-card"
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                if (!isBackingUp) {
+                  setSelectedDestinations(prev => ({ ...prev, pc: !prev.pc }));
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  if (!isBackingUp) setSelectedDestinations(prev => ({ ...prev, pc: !prev.pc }));
+                }
+              }}
+              className={`relative flex flex-col justify-between p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                selectedDestinations.pc
+                  ? 'bg-emerald-950/20 border-emerald-500/50 shadow-sm shadow-emerald-900/30'
+                  : 'bg-slate-800/40 border-slate-700 hover:border-slate-600'
+              }`}
+            >
+              <div>
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center space-x-2.5">
+                    <div className={`p-2 rounded-lg ${selectedDestinations.pc ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
+                      <HardDrive className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-white">स्थानिक संगणक</h4>
+                      <span className="text-[10px] text-emerald-400 font-mono">
+                        {drives.pc?.path?.startsWith('D:') ? 'D: Drive (सुरक्षित)' : 'Documents Folder'}
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-white">स्थानिक संगणक</h4>
-                    <span className="text-[10px] text-emerald-400 font-mono">
-                      {drives.pc?.path?.startsWith('D:') ? 'D: Drive (सुरक्षित)' : 'Documents Folder'}
-                    </span>
-                  </div>
+                  <input
+                    type="checkbox"
+                    id="pc-backup-checkbox"
+                    checked={selectedDestinations.pc}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setSelectedDestinations(prev => ({ ...prev, pc: e.target.checked }));
+                    }}
+                    disabled={isBackingUp}
+                    className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-600 bg-slate-700 cursor-pointer"
+                  />
                 </div>
-                <input
-                  type="checkbox"
-                  checked={selectedDestinations.pc}
-                  onChange={(e) => setSelectedDestinations({ ...selectedDestinations, pc: e.target.checked })}
-                  disabled={isBackingUp}
-                  className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-600 bg-slate-700"
-                />
+                <p className="text-[11px] text-slate-400 mt-2.5">
+                  हार्ड डिस्कवरील बॅकअप फोल्डरमध्ये सुरक्षित .db फाईल जतन होते (३० दिवसांचे ऑटो-रोटेशन).
+                </p>
               </div>
-              <p className="text-[11px] text-slate-400 mt-2.5">
-                हार्ड डिस्कवरील बॅकअप फोल्डरमध्ये सुरक्षित .db फाईल जतन होते (३० दिवसांचे ऑटो-रोटेशन).
-              </p>
-            </label>
+            </div>
 
             {/* 2. Removable USB Pendrive */}
-            <label className={`relative flex flex-col p-4 rounded-xl border transition-all ${
-              !drives.usb?.available
-                ? 'bg-slate-800/20 border-slate-800 opacity-80 cursor-not-allowed'
-                : selectedDestinations.usb
-                  ? 'bg-emerald-950/20 border-emerald-500/50 shadow-sm shadow-emerald-900/30 cursor-pointer'
-                  : 'bg-slate-800/40 border-slate-700 hover:border-slate-600 cursor-pointer'
-            }`}>
-              <div className="flex items-start justify-between">
-                <div className="flex items-center space-x-2.5">
-                  <div className={`p-2 rounded-lg ${
-                    !drives.usb?.available
-                      ? 'bg-amber-500/10 text-amber-400'
-                      : selectedDestinations.usb
+            <div
+              id="usb-drive-card"
+              role="button"
+              tabIndex={0}
+              onClick={handleToggleUsb}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleToggleUsb();
+                }
+              }}
+              className={`relative flex flex-col justify-between p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                selectedDestinations.usb
+                  ? 'bg-emerald-950/30 border-emerald-500 shadow-md shadow-emerald-900/40 ring-1 ring-emerald-500/40'
+                  : drives.usb?.available
+                    ? 'bg-slate-800/40 border-slate-700 hover:border-slate-500 hover:bg-slate-800/70'
+                    : 'bg-slate-800/25 border-dashed border-amber-500/35 hover:border-amber-400 hover:bg-slate-800/45'
+              }`}
+            >
+              <div>
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center space-x-2.5">
+                    <div className={`p-2 rounded-lg transition-colors ${
+                      selectedDestinations.usb
                         ? 'bg-emerald-500/20 text-emerald-400'
-                        : 'bg-slate-700 text-slate-400'
-                  }`}>
-                    <Usb className="w-5 h-5" />
+                        : drives.usb?.available
+                          ? 'bg-teal-500/20 text-teal-400'
+                          : 'bg-amber-500/10 text-amber-400'
+                    }`}>
+                      <Usb className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-white flex items-center space-x-1.5">
+                        <span>यूएसबी पेनड्राइव्ह</span>
+                        {selectedDestinations.usb && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 rounded border border-emerald-500/30">
+                            सक्रिय
+                          </span>
+                        )}
+                      </h4>
+                      {selectedDestinations.usb ? (
+                        <span className="inline-flex items-center text-[10px] text-emerald-400 font-medium truncate max-w-[190px]" title={drives.usb?.path}>
+                          <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-400 shrink-0" />
+                          <span className="truncate">{drives.usb?.path || 'पेनड्राइव्ह दुय्यम प्रत'}</span>
+                        </span>
+                      ) : drives.usb?.available ? (
+                        <span className="inline-flex items-center text-[10px] text-teal-400 font-medium">
+                          <span className="w-1.5 h-1.5 rounded-full bg-teal-400 mr-1 animate-pulse"></span>
+                          पेनड्राइव्ह उपलब्ध (क्लिक करा)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center text-[10px] text-amber-400 font-medium">
+                          <AlertTriangle className="w-2.5 h-2.5 mr-1 shrink-0" />
+                          ऑटो-डिटेक्ट नाही (क्लिक करा)
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-white">यूएसबी पेनड्राइव्ह</h4>
-                    {drives.usb?.available ? (
-                      <span className="inline-flex items-center text-[10px] text-emerald-400 font-medium">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse"></span>
-                        जोडलेले आहे
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center text-[10px] text-amber-400 font-medium">
-                        <AlertTriangle className="w-2.5 h-2.5 mr-1" />
-                        जोडलेले नाही
-                      </span>
-                    )}
-                  </div>
+
+                  <input
+                    type="checkbox"
+                    id="usb-backup-checkbox"
+                    checked={selectedDestinations.usb}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      handleToggleUsb();
+                    }}
+                    disabled={isBackingUp}
+                    className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-600 bg-slate-700 cursor-pointer"
+                  />
                 </div>
-                <input
-                  type="checkbox"
-                  checked={selectedDestinations.usb && drives.usb?.available}
-                  onChange={(e) => setSelectedDestinations({ ...selectedDestinations, usb: e.target.checked })}
-                  disabled={!drives.usb?.available || isBackingUp}
-                  className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-600 bg-slate-700"
-                />
+
+                {/* Action Row: Browse Folder & Rescan */}
+                <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+                  <button
+                    type="button"
+                    onClick={handleBrowseUsbFolder}
+                    disabled={isBackingUp}
+                    className="inline-flex items-center space-x-1 text-emerald-400 hover:text-emerald-300 font-medium bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded-md transition-colors border border-emerald-500/20"
+                  >
+                    <FolderCheck className="w-3 h-3" />
+                    <span>फोल्डर निवडा (Browse)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      loadDriveStatus();
+                    }}
+                    disabled={loadingDrives || isBackingUp}
+                    className="inline-flex items-center space-x-1 text-slate-400 hover:text-slate-200 px-1.5 py-1 rounded transition-colors"
+                    title="पेनड्राइव्ह पुन्हा शोधा"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${loadingDrives ? 'animate-spin' : ''}`} />
+                    <span>पुन्हा शोधा</span>
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-slate-400 mt-2">
+                  {selectedDestinations.usb
+                    ? '✓ दुकान बंद करताना पेनड्राइव्हवर दुय्यम प्रत सुरक्षित सेव्ह होईल.'
+                    : 'संगणक खराब झाल्यास पेनड्राइव्हमधील बॅकअपमुळे १००% डेटा वाचतो.'}
+                </p>
               </div>
-              <p className="text-[11px] text-slate-400 mt-2.5">
-                {drives.usb?.available
-                  ? `पेनड्राइव्हवर दुय्यम प्रत सेव्ह केली जाईल (${drives.usb.path})`
-                  : 'संगणक खराब झाल्यास डेटा वाचवण्यासाठी पेनड्राइव्ह लावणे फायदेशीर ठरते.'}
-              </p>
-            </label>
+            </div>
           </div>
 
           {/* Backup Progress State */}

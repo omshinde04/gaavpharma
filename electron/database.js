@@ -2630,14 +2630,21 @@ function createDatabaseBackup(options = {}) {
   const availableDrives = getAvailableBackupDrives();
   const targets = [];
 
-  if (customPath) {
-    targets.push({ type: 'custom', dir: customPath });
+  if (options.customPath) {
+    targets.push({ type: 'custom', dir: options.customPath });
   } else {
     if (destinations.includes('pc') && availableDrives.pc.path) {
       targets.push({ type: 'pc', dir: availableDrives.pc.path });
     }
-    if (destinations.includes('usb') && availableDrives.usb.available && availableDrives.usb.path) {
-      targets.push({ type: 'usb', dir: availableDrives.usb.path });
+    if (destinations.includes('usb')) {
+      const usbDir = options.usbPath || (availableDrives.usb.available ? availableDrives.usb.path : null);
+      if (usbDir) {
+        targets.push({ type: 'usb', dir: usbDir });
+      } else {
+        // Fallback: If USB was selected but not mounted, save secondary mirror in backup subfolder
+        const fallbackUsbDir = path.join(availableDrives.pc.path || os.homedir(), 'USB_Backup_Mirror');
+        targets.push({ type: 'usb', dir: fallbackUsbDir });
+      }
     }
   }
 

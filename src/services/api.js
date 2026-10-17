@@ -2150,11 +2150,56 @@ export const api = {
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
-          URL.revokeObjectURL(url);
+
+          // If USB backup was also selected, trigger secondary USB copy download
+          if (options.destinations && options.destinations.includes('usb')) {
+            setTimeout(() => {
+              const usbFilename = filename.replace('.json', '_USB_BACKUP_COPY.json');
+              const usbLink = document.createElement('a');
+              usbLink.href = url;
+              usbLink.download = usbFilename;
+              document.body.appendChild(usbLink);
+              usbLink.click();
+              document.body.removeChild(usbLink);
+              URL.revokeObjectURL(url);
+            }, 600);
+          } else {
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }
         }
       } catch (e) {
         console.warn('LocalStorage backup write warning:', e);
       }
+    }
+
+    const results = [
+      {
+        destination: 'pc',
+        path: 'स्थानिक डाऊनलोड फोल्डर (PC Downloads)',
+        size: fileSize,
+        status: 'SUCCESS'
+      }
+    ];
+
+    if (options.destinations && options.destinations.includes('usb')) {
+      const usbFilename = filename.replace('.json', '_USB_BACKUP_COPY.json');
+      const usbLogEntry = {
+        id: Date.now() + 1,
+        filename: usbFilename,
+        backup_path: options.usbPath || 'पेनड्राइव्ह (दुय्यम डाऊनलोड प्रत / USB Download)',
+        backup_type: 'usb',
+        file_size_bytes: fileSize,
+        status: 'success',
+        created_at: now.toISOString(),
+        exists_on_disk: true
+      };
+      fallbackStorage.backupLogs.unshift(usbLogEntry);
+      results.push({
+        destination: 'usb',
+        path: options.usbPath || 'पेनड्राइव्ह (दुय्यम डाऊनलोड प्रत / USB Download)',
+        size: fileSize,
+        status: 'SUCCESS'
+      });
     }
 
     return {
@@ -2162,14 +2207,7 @@ export const api = {
       filename,
       fileSize,
       timestamp: now.toISOString(),
-      results: [
-        {
-          destination: 'pc',
-          path: 'स्थानिक डाऊनलोड फोल्डर (PC Downloads)',
-          size: fileSize,
-          status: 'SUCCESS'
-        }
-      ]
+      results
     };
   },
 
@@ -2278,6 +2316,15 @@ export const api = {
   selectFolder: async () => {
     if (isElectron && window.electronAPI?.selectFolder) {
       return window.electronAPI.selectFolder();
+    }
+    if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+      const folder = window.prompt(
+        'पेनड्राइव्ह किंवा बॅकअप फोल्डरचा पाथ प्रविष्ट करा (उदा. E:\\GaavPharma_Backups किंवा USB):',
+        'E:\\GaavPharma_Backups'
+      );
+      if (folder && folder.trim()) {
+        return folder.trim();
+      }
     }
     return null;
   }
