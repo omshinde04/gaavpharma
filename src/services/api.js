@@ -2,10 +2,12 @@
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
-// In-memory fallback mock for development/browser preview if not in Electron
-const fallbackStorage = {
-  license: null,
-  storeProfile: {
+const loadFallbackStoreProfile = () => {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('gaavpharma_store_profile') : null;
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return {
     store_name: '',
     dl_number: '',
     gstin: '',
@@ -14,10 +16,35 @@ const fallbackStorage = {
     upi_id: '',
     printer_type: '80mm',
     auto_print: 0
-  },
-  users: [
+  };
+};
+
+const loadFallbackLicense = () => {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('gaavpharma_license') : null;
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return null;
+};
+
+const loadFallbackUsers = () => {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('gaavpharma_users') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {}
+  return [
     { id: 1, username: 'superadmin', display_name: 'Om Shinde (Founder)', pin_code: '9999', role: 'super_admin', is_active: 1 }
-  ],
+  ];
+};
+
+// In-memory fallback mock with localStorage persistence for web dev preview
+const fallbackStorage = {
+  license: loadFallbackLicense(),
+  storeProfile: loadFallbackStoreProfile(),
+  users: loadFallbackUsers(),
   featureToggles: {
     allow_khata: true,
     allow_loose_tablets: true,
@@ -350,6 +377,14 @@ export const api = {
       fallbackStorage.users.push(owner);
     }
 
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_store_profile', JSON.stringify(fallbackStorage.storeProfile));
+        localStorage.setItem('gaavpharma_license', JSON.stringify(fallbackStorage.license));
+        localStorage.setItem('gaavpharma_users', JSON.stringify(fallbackStorage.users));
+      } catch (e) {}
+    }
+
     return {
       success: true,
       storeProfile: fallbackStorage.storeProfile,
@@ -390,19 +425,36 @@ export const api = {
       is_active: 1
     };
     fallbackStorage.users.push(newUser);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_users', JSON.stringify(fallbackStorage.users));
+      } catch (e) {}
+    }
     return newUser;
   },
 
   updateUser: async (id, userData) => {
     if (isElectron) return window.electronAPI.updateUser(id, userData);
     const u = fallbackStorage.users.find(user => user.id === id);
-    if (u) Object.assign(u, userData);
+    if (u) {
+      Object.assign(u, userData);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('gaavpharma_users', JSON.stringify(fallbackStorage.users));
+        } catch (e) {}
+      }
+    }
     return u;
   },
 
   deleteUser: async (id) => {
     if (isElectron) return window.electronAPI.deleteUser(id);
     fallbackStorage.users = fallbackStorage.users.filter(user => user.id !== id && user.role !== 'super_admin');
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_users', JSON.stringify(fallbackStorage.users));
+      } catch (e) {}
+    }
     return { success: true };
   },
 
@@ -411,6 +463,11 @@ export const api = {
     fallbackStorage.users = [
       { id: 1, username: 'superadmin', display_name: 'Om Shinde (Founder)', pin_code: '9999', role: 'super_admin', is_active: 1 }
     ];
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_users', JSON.stringify(fallbackStorage.users));
+      } catch (e) {}
+    }
     return [...fallbackStorage.users];
   },
 
@@ -423,6 +480,11 @@ export const api = {
   updateStoreProfile: async (data) => {
     if (isElectron) return window.electronAPI.updateStoreProfile(data);
     Object.assign(fallbackStorage.storeProfile, data);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_store_profile', JSON.stringify(fallbackStorage.storeProfile));
+      } catch (e) {}
+    }
     return fallbackStorage.storeProfile;
   },
 

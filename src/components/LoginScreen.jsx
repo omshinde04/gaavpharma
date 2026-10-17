@@ -93,13 +93,19 @@ export default function LoginScreen({ onLoginSuccess, storeProfile, licenseStatu
             <Activity className="w-6 h-6 text-white" />
           </div>
           <h2 className="text-base font-bold tracking-tight text-white">
-            {storeProfile?.store_name || 'om Medical Stores'}
+            {storeProfile?.store_name ? storeProfile.store_name : 'GaavPharma Provider Hub'}
           </h2>
-          <div className="flex items-center justify-center space-x-2 text-[11px] text-slate-400 font-mono">
-            <span>DL: {storeProfile?.dl_number || '20B/21B-MH-SOL-194829'}</span>
-            <span>•</span>
-            <span>GSTIN: {storeProfile?.gstin || '27AABCA1234F1Z9'}</span>
-          </div>
+          {storeProfile?.store_name ? (
+            <div className="flex items-center justify-center space-x-2 text-[11px] text-slate-400 font-mono">
+              {storeProfile?.dl_number && <span>DL: {storeProfile.dl_number}</span>}
+              {storeProfile?.dl_number && storeProfile?.gstin && <span>•</span>}
+              {storeProfile?.gstin && <span>GSTIN: {storeProfile.gstin}</span>}
+            </div>
+          ) : (
+            <div className="text-[11px] text-slate-400 font-mono">
+              Terminal Unprovisioned • Enter Super Admin PIN (9999) to Setup
+            </div>
+          )}
         </div>
 
         {/* Mode Selector */}
@@ -188,27 +194,20 @@ export default function LoginScreen({ onLoginSuccess, storeProfile, licenseStatu
                 </button>
               </div>
 
-              {/* Quick Demo Login Chips */}
+              {/* Quick Login Chips */}
               <div className="pt-3 border-t border-slate-100 text-center space-y-1.5 font-sans">
-                <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
-                  Quick Login Demo PINs:
-                </div>
                 <div className="flex flex-wrap justify-center gap-1.5">
-                  <button
-                    onClick={() => setPin('1234')}
-                    className="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-medium border border-slate-200"
-                  >
-                    Cashier (1234)
-                  </button>
-                  <button
-                    onClick={() => setPin('1111')}
-                    className="px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[10px] font-medium border border-emerald-200"
-                  >
-                    Store Owner (1111)
-                  </button>
+                  {storeProfile?.store_name ? (
+                    <button
+                      onClick={() => setPin('1111')}
+                      className="px-2.5 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[10px] font-medium border border-emerald-200"
+                    >
+                      Store Owner (1111)
+                    </button>
+                  ) : null}
                   <button
                     onClick={() => setPin('9999')}
-                    className="px-2 py-0.5 rounded bg-purple-50 hover:bg-purple-100 text-purple-800 text-[10px] font-medium border border-purple-200"
+                    className="px-2.5 py-1 rounded bg-purple-50 hover:bg-purple-100 text-purple-800 text-[10px] font-medium border border-purple-200"
                   >
                     Super Admin (9999)
                   </button>

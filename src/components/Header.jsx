@@ -41,16 +41,16 @@ export default function Header({
         <div>
           <div className="flex items-center space-x-2">
             <h1 className="text-xs font-semibold tracking-tight text-white leading-tight">
-              {storeProfile?.store_name || 'om Medical Stores'}
+              {storeProfile?.store_name || 'GaavPharma Retail POS'}
             </h1>
             <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-medium px-1.5 py-0.2 rounded-full tracking-wide">
               Retail POS
             </span>
           </div>
           <div className="flex items-center space-x-2 text-[10px] text-slate-400 font-mono mt-0.5">
-            <span>DL: {storeProfile?.dl_number || '20B/21B-MH-SOL-194829'}</span>
+            <span>DL: {storeProfile?.dl_number || 'Pending DL'}</span>
             <span className="text-slate-600">•</span>
-            <span>GSTIN: {storeProfile?.gstin || '27AABCA1234F1Z9'}</span>
+            <span>GSTIN: {storeProfile?.gstin || 'Pending GSTIN'}</span>
           </div>
         </div>
       </div>
