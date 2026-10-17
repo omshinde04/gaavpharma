@@ -77,7 +77,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   markShortageAsOrdered: (ids, distributorId) => ipcRenderer.invoke('db:markShortageAsOrdered', ids, distributorId),
   deleteShortageItem: (id) => ipcRenderer.invoke('db:deleteShortageItem', id),
 
-  // System Utilities
+  // Backup & Disaster Recovery Engine
+  getAvailableBackupDrives: () => ipcRenderer.invoke('db:getAvailableBackupDrives'),
+  createDatabaseBackup: (options) => ipcRenderer.invoke('db:createDatabaseBackup', options),
+  getBackupHistory: (limit) => ipcRenderer.invoke('db:getBackupHistory', limit),
+  restoreDatabaseFromBackup: (filePath) => ipcRenderer.invoke('db:restoreDatabaseFromBackup', filePath),
+  getLastBackupTimestamp: () => ipcRenderer.invoke('db:getLastBackupTimestamp'),
+
+  // System Utilities & Dialogs
+  selectBackupFile: () => ipcRenderer.invoke('sys:selectBackupFile'),
+  selectFolder: () => ipcRenderer.invoke('sys:selectFolder'),
   openExternalUrl: (url) => ipcRenderer.invoke('sys:openExternalUrl', url),
   printReceipt: () => ipcRenderer.invoke('sys:printReceipt')
 });

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const db = require('./database');
 
@@ -138,7 +138,38 @@ function setupIpcHandlers() {
   ipcMain.handle('db:markShortageAsOrdered', (_, ids, distributorId) => db.markShortageAsOrdered(ids, distributorId));
   ipcMain.handle('db:deleteShortageItem', (_, id) => db.deleteShortageItem(id));
 
-  // System Utilities
+  // Backup & Disaster Recovery Engine
+  ipcMain.handle('db:getAvailableBackupDrives', () => db.getAvailableBackupDrives());
+  ipcMain.handle('db:createDatabaseBackup', (_, options) => db.createDatabaseBackup(options));
+  ipcMain.handle('db:getBackupHistory', (_, limit) => db.getBackupHistory(limit));
+  ipcMain.handle('db:restoreDatabaseFromBackup', (_, filePath) => db.restoreDatabaseFromBackup(filePath));
+  ipcMain.handle('db:getLastBackupTimestamp', () => db.getLastBackupTimestamp());
+
+  // System Utilities & Dialogs
+  ipcMain.handle('sys:selectBackupFile', async () => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'बॅकअप फाईल निवडा (Select Backup File to Restore)',
+      filters: [
+        { name: 'GaavPharma Database Backup (*.db)', extensions: ['db'] },
+        { name: 'All Files (*.*)', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle('sys:selectFolder', async () => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'बॅकअप फोल्डर निवडा (Select Backup Destination Folder)',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
   ipcMain.handle('sys:openExternalUrl', async (_, url) => {
     if (url && (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('mailto:'))) {
       await shell.openExternal(url);

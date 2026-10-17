@@ -13,7 +13,13 @@ import {
   FileText,
   MapPin,
   QrCode,
-  Sparkles
+  Sparkles,
+  Database,
+  HardDrive,
+  Usb,
+  RotateCcw,
+  RefreshCw,
+  FolderOpen
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -56,6 +62,13 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
     role: 'cashier'
   });
 
+  // Backup & Safety state
+  const [backupDrives, setBackupDrives] = useState({ pc: null, usb: null });
+  const [backupHistory, setBackupHistory] = useState([]);
+  const [lastBackupTime, setLastBackupTime] = useState(null);
+  const [isTakingBackup, setIsTakingBackup] = useState(false);
+  const [backupStatusMsg, setBackupStatusMsg] = useState('');
+
   useEffect(() => {
     loadSettings();
   }, []);
@@ -72,6 +85,62 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
       if (l) setLicense(l);
     } catch (err) {
       console.error(err);
+    }
+    loadBackupData();
+  };
+
+  const loadBackupData = async () => {
+    try {
+      const [drives, hist, lastTs] = await Promise.all([
+        api.getAvailableBackupDrives(),
+        api.getBackupHistory(),
+        api.getLastBackupTimestamp()
+      ]);
+      if (drives) setBackupDrives(drives);
+      if (hist) setBackupHistory(hist);
+      setLastBackupTime(lastTs);
+    } catch (e) {
+      console.warn('loadBackupData error:', e);
+    }
+  };
+
+  const handleTakeBackupNow = async () => {
+    setIsTakingBackup(true);
+    setBackupStatusMsg('डेटाबेस सुरक्षित सेव्ह होत आहे...');
+    try {
+      const res = await api.createDatabaseBackup({ backupType: 'manual' });
+      setBackupStatusMsg('✅ बॅकअप यशस्वीरीत्या सेव्ह झाला!');
+      await loadBackupData();
+      setTimeout(() => setBackupStatusMsg(''), 3000);
+    } catch (err) {
+      alert('बॅकअप घेताना त्रुटी आली: ' + err.message);
+      setBackupStatusMsg('');
+    } finally {
+      setIsTakingBackup(false);
+    }
+  };
+
+  const handleRestoreBackup = async (backupPath) => {
+    if (!confirm('⚠️ सावधान: डेटाबेस रिस्टोर केल्यास सध्याचा डेटा निवडलेल्या बॅकअप फाईलमधील डेटाने बदलला जाईल.\nतुम्हाला खात्री आहे का?')) {
+      return;
+    }
+    try {
+      const res = await api.restoreDatabaseFromBackup(backupPath);
+      alert(res.message || 'डेटाबेस पूर्ववत केला गेला. सॉफ्टवेअर पुन्हा लोड होत आहे.');
+      window.location.reload();
+    } catch (err) {
+      alert('रिस्टोर करताना त्रुटी आली: ' + err.message);
+    }
+  };
+
+  const handleSelectFileRestore = async () => {
+    try {
+      const filePath = await api.selectBackupFile();
+      if (filePath) {
+        handleRestoreBackup(filePath);
+      }
+    } catch (err) {
+      alert('फाईल निवडताना त्रुटी आली: ' + err.message);
     }
   };
 
@@ -273,6 +342,18 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
           >
             <Key className="w-3.5 h-3.5 text-amber-600" />
             <span>Subscription</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('backup');
+              loadBackupData();
+            }}
+            className={`flex-1 py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              activeTab === 'backup' ? 'bg-white text-slate-900 shadow-2xs font-semibold' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5 text-emerald-600" />
+            <span>डेटा सुरक्षा व बॅकअप</span>
           </button>
         </div>
 
@@ -785,6 +866,167 @@ export default function StoreSettingsModal({ onClose, onProfileUpdated, onToggle
                   Enter Renewal Code / License Key
                 </button>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'backup' && (
+            /* Data Safety & Dual Backup Engine */
+            <div className="space-y-4">
+              
+              {/* Header Card */}
+              <div className="p-4 bg-slate-900 text-white rounded-xl space-y-3">
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
+                      <Database className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-white">ड्युअल डेटा सुरक्षा व आपत्कालीन पुनर्प्राप्ती (Dual PC + USB Backup)</h4>
+                      <p className="text-[11px] text-slate-400">
+                        औषध साठा, उधारी (खाते), खरेदी बिल आणि जीएसटी डेटा स्थानिक हार्ड ड्राइव्ह आणि यूएसबी पेनड्राइव्हवर सुरक्षित ठेवा.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={loadBackupData}
+                    className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors"
+                    title="रिफ्रेश करा"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-slate-300 pt-2 border-t border-slate-800">
+                  <span className="flex items-center space-x-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
+                    <span>मागील यशस्वी बॅकअप:</span>
+                    <strong className="text-white">
+                      {lastBackupTime ? new Date(lastBackupTime).toLocaleString('mr-IN') : 'अद्याप घेतलेला नाही'}
+                    </strong>
+                  </span>
+
+                  <button
+                    onClick={handleTakeBackupNow}
+                    disabled={isTakingBackup}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-colors flex items-center space-x-1.5 shadow-sm"
+                  >
+                    <Database className="w-3.5 h-3.5" />
+                    <span>{isTakingBackup ? 'बॅकअप घेत आहे...' : 'आता सुरक्षित बॅकअप घ्या'}</span>
+                  </button>
+                </div>
+
+                {backupStatusMsg && (
+                  <div className="text-xs text-emerald-300 bg-emerald-950/60 border border-emerald-800 px-3 py-1.5 rounded-lg font-medium">
+                    {backupStatusMsg}
+                  </div>
+                )}
+              </div>
+
+              {/* Connected Drives Overview */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-800 text-xs flex items-center space-x-1.5">
+                      <HardDrive className="w-4 h-4 text-emerald-600" />
+                      <span>स्थानिक संगणक (PC)</span>
+                    </span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
+                      सक्रिय
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 font-mono break-all">
+                    {backupDrives.pc?.path || 'Documents/GaavPharma_Backups'}
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    ३० दिवसांचे ऑटो-रोटेशन सक्रिय (हार्ड डिस्क कधीही भरणार नाही)
+                  </div>
+                </div>
+
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-800 text-xs flex items-center space-x-1.5">
+                      <Usb className="w-4 h-4 text-blue-600" />
+                      <span>यूएसबी पेनड्राइव्ह (USB)</span>
+                    </span>
+                    {backupDrives.usb?.available ? (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
+                        जोडलेले आहे
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                        जोडलेले नाही
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-500 font-mono break-all">
+                    {backupDrives.usb?.path || 'कोणताही पेनड्राइव्ह आढळला नाही'}
+                  </div>
+                  <div className="text-[10px] text-slate-400">
+                    संगणक खराब झाल्यास पेनड्राइव्हमधून १ सेकंदात डेटा पूर्ववत होतो.
+                  </div>
+                </div>
+              </div>
+
+              {/* Restore Action */}
+              <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <div className="font-semibold text-amber-900 text-xs">आपत्कालीन डेटा पूर्ववत (Emergency Restore)</div>
+                  <p className="text-[11px] text-amber-700">
+                    दुसऱ्या संगणकावरील किंवा जुनी बॅकअप फाईल निवडून संपूर्ण डेटा परत मिळवा.
+                  </p>
+                </div>
+                <button
+                  onClick={handleSelectFileRestore}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold text-xs transition-colors flex items-center space-x-1 shrink-0"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>फाईल निवडून रिस्टोर करा</span>
+                </button>
+              </div>
+
+              {/* Backup History Table */}
+              <div className="space-y-2">
+                <div className="font-semibold text-slate-800 text-xs flex items-center justify-between">
+                  <span>अलीकडील बॅकअप इतिहास ({backupHistory.length})</span>
+                  <span className="text-[10px] text-slate-400">नवीनतम बॅकअप सर्वात वर</span>
+                </div>
+
+                {backupHistory.length === 0 ? (
+                  <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-center text-slate-400 text-xs">
+                    अद्याप कोणतीही बॅकअप नोंद नाही. "आता सुरक्षित बॅकअप घ्या" बटनावर क्लिक करा.
+                  </div>
+                ) : (
+                  <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white">
+                    {backupHistory.map((item) => (
+                      <div key={item.id} className="p-2.5 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                        <div className="space-y-0.5">
+                          <div className="font-medium text-slate-800 text-xs font-mono">{item.filename}</div>
+                          <div className="text-[10px] text-slate-400 flex items-center space-x-2">
+                            <span>{new Date(item.created_at).toLocaleString('mr-IN')}</span>
+                            <span>•</span>
+                            <span>{Math.round((item.file_size_bytes || 0) / 1024)} KB</span>
+                            <span>•</span>
+                            <span className="uppercase text-[9px] px-1 py-0.2 bg-slate-100 rounded text-slate-600">
+                              {item.backup_type}
+                            </span>
+                          </div>
+                        </div>
+
+                        {item.backup_path && (
+                          <button
+                            onClick={() => handleRestoreBackup(item.backup_path)}
+                            className="px-2 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors flex items-center space-x-1"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            <span>रिस्टोर</span>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
             </div>
           )}
         </div>

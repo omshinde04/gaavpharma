@@ -2,9 +2,15 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const Database = require('better-sqlite3');
+let Database = null;
+try {
+  Database = require('better-sqlite3');
+} catch (err) {
+  // better-sqlite3 native binary compiled for Electron ABI
+}
 
 let db = null;
+let currentDbFilePath = null;
 const MASTER_SECRET = 'gaavpharma-super-secret-master-key-2026';
 
 function parseExpiryDate(mmYyStr) {
@@ -57,6 +63,7 @@ function initDatabase(customPath) {
     dbFilePath = path.join(userDataDir, 'gaavpharma.db');
   }
 
+  currentDbFilePath = dbFilePath;
   db = new Database(dbFilePath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
@@ -279,6 +286,18 @@ function createTables() {
       ordered_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS backup_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      filename TEXT NOT NULL,
+      backup_path TEXT NOT NULL,
+      backup_type TEXT DEFAULT 'local',
+      file_size_bytes INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'success',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_backup_logs_created ON backup_logs(created_at);
 
     CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
     CREATE INDEX IF NOT EXISTS idx_products_salt ON products(generic_salt);
@@ -2445,6 +2464,321 @@ function clearAllRecords() {
   return { success: true };
 }
 
+// -------------------------------------------------------------
+// DUAL PC + REMOVABLE USB BACKUP & DISASTER RECOVERY ENGINE
+// -------------------------------------------------------------
+
+function getAvailableBackupDrives() {
+  const platform = process.platform;
+  const results = {
+    pc: {
+      available: true,
+      path: '',
+      label: 'स्थानिक संगणक हार्ड ड्राइव्ह (Local Hard Drive)'
+    },
+    usb: {
+      available: false,
+      path: '',
+      label: 'यूएसबी पेनड्राइव्ह जोडलेले नाही (No USB Detected)'
+    }
+  };
+
+  // Determine PC default backup directory
+  if (platform === 'win32') {
+    let pcBase = path.join(os.homedir(), 'Documents', 'GaavPharma_Backups');
+    try {
+      if (fs.existsSync('D:\\')) {
+        pcBase = 'D:\\GaavPharma_Backups';
+      }
+    } catch {
+      pcBase = path.join(os.homedir(), 'Documents', 'GaavPharma_Backups');
+    }
+    results.pc.path = pcBase;
+    results.pc.label = `स्थानिक हार्ड ड्राइव्ह (${pcBase.startsWith('D:') ? 'D: Drive' : 'Documents Folder'})`;
+
+    // Detect USB Removable drives: scan drive letters E: through Z:
+    const driveLetters = ['E', 'F', 'G', 'H', 'I', 'J', 'U'];
+    for (const letter of driveLetters) {
+      const rootPath = `${letter}:\\`;
+      try {
+        if (fs.existsSync(rootPath)) {
+          results.usb.available = true;
+          results.usb.path = path.join(rootPath, 'GaavPharma_Backups');
+          results.usb.label = `यूएसबी पेनड्राइव्ह जोडलेले आहे (Drive ${letter}:\\)`;
+          break;
+        }
+      } catch (e) {
+        // Continue scanning
+      }
+    }
+  } else if (platform === 'darwin') {
+    // macOS
+    results.pc.path = path.join(os.homedir(), 'Documents', 'GaavPharma_Backups');
+    results.pc.label = 'स्थानिक संगणक (Documents / GaavPharma_Backups)';
+
+    try {
+      if (fs.existsSync('/Volumes')) {
+        const volumes = fs.readdirSync('/Volumes');
+        for (const vol of volumes) {
+          if (vol !== 'Macintosh HD' && !vol.startsWith('.') && vol !== 'Recovery' && vol !== 'Preboot') {
+            const volPath = path.join('/Volumes', vol);
+            try {
+              const stat = fs.statSync(volPath);
+              if (stat.isDirectory()) {
+                results.usb.available = true;
+                results.usb.path = path.join(volPath, 'GaavPharma_Backups');
+                results.usb.label = `यूएसबी पेनड्राइव्ह जोडलेले आहे (${vol})`;
+                break;
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (e) {}
+  } else {
+    // Linux
+    results.pc.path = path.join(os.homedir(), 'Documents', 'GaavPharma_Backups');
+    results.pc.label = 'स्थानिक संगणक (Documents / GaavPharma_Backups)';
+
+    try {
+      const user = os.userInfo().username;
+      const mediaPath = path.join('/media', user);
+      if (fs.existsSync(mediaPath)) {
+        const mounts = fs.readdirSync(mediaPath);
+        if (mounts.length > 0) {
+          results.usb.available = true;
+          results.usb.path = path.join(mediaPath, mounts[0], 'GaavPharma_Backups');
+          results.usb.label = `यूएसबी ड्राइव्ह जोडलेले आहे (${mounts[0]})`;
+        }
+      }
+    } catch {}
+  }
+
+  return results;
+}
+
+function pruneOldBackups(folderPath, retentionDays = 30, minKeep = 10) {
+  try {
+    if (!fs.existsSync(folderPath)) return 0;
+    const files = fs.readdirSync(folderPath);
+    const backupFiles = files
+      .filter(f => f.startsWith('GaavPharma_Backup_') && (f.endsWith('.db') || f.endsWith('.json')))
+      .map(f => {
+        const fullPath = path.join(folderPath, f);
+        try {
+          const stat = fs.statSync(fullPath);
+          return { name: f, path: fullPath, mtime: stat.mtimeMs };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtime - a.mtime); // Newest first
+
+    if (backupFiles.length <= minKeep) {
+      return 0; // Always keep at least minKeep
+    }
+
+    const cutoffTime = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    let prunedCount = 0;
+
+    for (let i = minKeep; i < backupFiles.length; i++) {
+      if (backupFiles[i].mtime < cutoffTime) {
+        try {
+          fs.unlinkSync(backupFiles[i].path);
+          prunedCount++;
+        } catch (e) {
+          console.warn('[Backup Prune] Failed to delete old backup:', backupFiles[i].path, e.message);
+        }
+      }
+    }
+    return prunedCount;
+  } catch (err) {
+    console.warn('[Backup Prune] error:', err.message);
+    return 0;
+  }
+}
+
+function createDatabaseBackup(options = {}) {
+  if (!db) initDatabase();
+
+  const backupType = options.backupType || 'manual';
+  const customPath = options.customPath;
+  const destinations = options.destinations || ['pc', 'usb'];
+
+  // 1. Force WAL Checkpoint to guarantee zero uncommitted data
+  try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch (err) {
+    console.warn('[Backup] wal_checkpoint warning:', err.message);
+  }
+
+  // 2. Determine source file
+  const sourceFile = currentDbFilePath || path.join(__dirname, '..', 'data', 'gaavpharma.db');
+  if (!fs.existsSync(sourceFile)) {
+    throw new Error(`Database source file does not exist: ${sourceFile}`);
+  }
+
+  // 3. Format filename with Store Name and Timestamp
+  const store = getStoreProfile();
+  const safeStore = (store?.store_name || 'GaavPharma').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const tsStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  const filename = `GaavPharma_Backup_${safeStore}_${tsStr}.db`;
+
+  const availableDrives = getAvailableBackupDrives();
+  const targets = [];
+
+  if (customPath) {
+    targets.push({ type: 'custom', dir: customPath });
+  } else {
+    if (destinations.includes('pc') && availableDrives.pc.path) {
+      targets.push({ type: 'pc', dir: availableDrives.pc.path });
+    }
+    if (destinations.includes('usb') && availableDrives.usb.available && availableDrives.usb.path) {
+      targets.push({ type: 'usb', dir: availableDrives.usb.path });
+    }
+  }
+
+  if (targets.length === 0) {
+    targets.push({ type: 'pc', dir: availableDrives.pc.path });
+  }
+
+  const results = [];
+  const statSource = fs.statSync(sourceFile);
+  const fileSize = statSource.size;
+
+  for (const target of targets) {
+    try {
+      if (!fs.existsSync(target.dir)) {
+        fs.mkdirSync(target.dir, { recursive: true });
+      }
+      const targetFilePath = path.join(target.dir, filename);
+
+      // Perform synchronous copy
+      fs.copyFileSync(sourceFile, targetFilePath);
+
+      // Prune backups older than 30 days in this folder
+      pruneOldBackups(target.dir, 30, 10);
+
+      // Record in backup_logs
+      try {
+        db.prepare(`
+          INSERT INTO backup_logs (filename, backup_path, backup_type, file_size_bytes, status)
+          VALUES (?, ?, ?, ?, 'success')
+        `).run(filename, targetFilePath, target.type, fileSize);
+      } catch (logErr) {
+        console.warn('[Backup] log write warning:', logErr.message);
+      }
+
+      results.push({
+        destination: target.type,
+        path: targetFilePath,
+        size: fileSize,
+        status: 'SUCCESS'
+      });
+    } catch (err) {
+      console.error(`[Backup] Failed to backup to ${target.dir}:`, err);
+      results.push({
+        destination: target.type,
+        path: path.join(target.dir, filename),
+        error: err.message,
+        status: 'FAILED'
+      });
+    }
+  }
+
+  return {
+    success: results.some(r => r.status === 'SUCCESS'),
+    filename,
+    fileSize,
+    timestamp: now.toISOString(),
+    results
+  };
+}
+
+function getBackupHistory(limit = 50) {
+  if (!db) initDatabase();
+  try {
+    const logs = db.prepare(`
+      SELECT * FROM backup_logs ORDER BY id DESC LIMIT ?
+    `).all(limit);
+
+    return logs.map(l => ({
+      ...l,
+      exists_on_disk: fs.existsSync(l.backup_path)
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+function restoreDatabaseFromBackup(backupFilePath) {
+  if (!backupFilePath || !fs.existsSync(backupFilePath)) {
+    throw new Error('बॅकअप फाईल सापडली नाही (Backup file not found)');
+  }
+
+  // Validate SQLite file header
+  const fd = fs.openSync(backupFilePath, 'r');
+  const buffer = Buffer.alloc(16);
+  fs.readSync(fd, buffer, 0, 16, 0);
+  fs.closeSync(fd);
+
+  const header = buffer.toString('utf-8', 0, 15);
+  if (!header.startsWith('SQLite format 3')) {
+    throw new Error('अवैध बॅकअप फाईल: ही वैध SQLite फाईल नाही (Invalid SQLite backup file)');
+  }
+
+  const targetDbPath = currentDbFilePath || path.join(__dirname, '..', 'data', 'gaavpharma.db');
+
+  // 1. Close current db connection
+  if (db) {
+    try {
+      db.close();
+    } catch (e) {}
+    db = null;
+  }
+
+  // 2. Replace current db file with backup file
+  fs.copyFileSync(backupFilePath, targetDbPath);
+
+  // Remove stale WAL/SHM files if any
+  try {
+    if (fs.existsSync(`${targetDbPath}-wal`)) fs.unlinkSync(`${targetDbPath}-wal`);
+    if (fs.existsSync(`${targetDbPath}-shm`)) fs.unlinkSync(`${targetDbPath}-shm`);
+  } catch (e) {}
+
+  // 3. Re-initialize database
+  initDatabase(targetDbPath);
+
+  // 4. Log restore event
+  try {
+    const stat = fs.statSync(targetDbPath);
+    db.prepare(`
+      INSERT INTO backup_logs (filename, backup_path, backup_type, file_size_bytes, status)
+      VALUES (?, ?, 'restore_event', ?, 'restored')
+    `).run(path.basename(backupFilePath), backupFilePath, stat.size);
+  } catch (e) {}
+
+  return {
+    success: true,
+    message: 'डेटाबेस यशस्वीरीत्या पूर्ववत (Restore) केला गेला.'
+  };
+}
+
+function getLastBackupTimestamp() {
+  if (!db) initDatabase();
+  try {
+    const row = db.prepare(`
+      SELECT created_at FROM backup_logs WHERE status = 'success' ORDER BY id DESC LIMIT 1
+    `).get();
+    return row ? row.created_at : null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   initDatabase,
   getHardwareId,
@@ -2502,5 +2836,11 @@ module.exports = {
   updateShortageItem,
   markShortageAsOrdered,
   deleteShortageItem,
-  clearAllRecords
+  clearAllRecords,
+  getAvailableBackupDrives,
+  pruneOldBackups,
+  createDatabaseBackup,
+  getBackupHistory,
+  restoreDatabaseFromBackup,
+  getLastBackupTimestamp
 };

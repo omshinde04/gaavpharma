@@ -12,6 +12,7 @@ import StoreSettingsModal from './components/StoreSettingsModal';
 import SuperAdminHubModal from './components/SuperAdminHubModal';
 import SuperAdminConsole from './components/SuperAdminConsole';
 import LicenseActivationModal from './components/LicenseActivationModal';
+import BackupExitModal from './components/BackupExitModal';
 import { api } from './services/api';
 import { AlertCircle, Key } from 'lucide-react';
 
@@ -80,6 +81,7 @@ export default function App() {
   const [showStoreSettings, setShowStoreSettings] = useState(false);
   const [showSuperAdminHub, setShowSuperAdminHub] = useState(false);
   const [showLicenseModal, setShowLicenseModal] = useState(false);
+  const [showBackupExitModal, setShowBackupExitModal] = useState(false);
 
   // Load app data
   const loadAppData = useCallback(async () => {
@@ -114,7 +116,7 @@ export default function App() {
       // Lock Terminal: Shift + L
       if (e.shiftKey && (e.key === 'L' || e.key === 'l') && !e.target.matches('input, textarea')) {
         e.preventDefault();
-        handleLogout();
+        setShowBackupExitModal(true);
         return;
       }
 
@@ -171,6 +173,11 @@ export default function App() {
     } catch (err) {
       console.error('Failed to clear session:', err);
     }
+    setShowBackupExitModal(false);
+  };
+
+  const handleRequestLogout = () => {
+    setShowBackupExitModal(true);
   };
 
   // If no user is logged in, show the PIN Lockscreen
@@ -232,7 +239,7 @@ export default function App() {
         storeProfile={storeProfile}
         licenseStatus={licenseStatus}
         currentUser={currentUser}
-        onLogout={handleLogout}
+        onLogout={handleRequestLogout}
         onOpenStoreSettings={() => setShowStoreSettings(true)}
         onOpenSuperAdminHub={() => setSuperAdminView('console')}
         onOpenLicenseModal={() => setShowLicenseModal(true)}
@@ -331,6 +338,14 @@ export default function App() {
           onClose={() => setShowLicenseModal(false)}
         />
       )}
+
+      {/* Daily Shop Exit / Logout Backup Modal */}
+      <BackupExitModal
+        isOpen={showBackupExitModal}
+        onClose={() => setShowBackupExitModal(false)}
+        onConfirmLogout={handleLogout}
+        storeProfile={storeProfile}
+      />
     </div>
   );
 }

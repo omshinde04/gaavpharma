@@ -466,7 +466,9 @@ const fallbackStorage = {
   purchases: loadFallbackPurchases(),
   distributorLedger: loadFallbackDistributorLedger(),
   debitNotes: loadFallbackDebitNotes(),
-  shortageDiary: loadFallbackShortageDiary()
+  shortageDiary: loadFallbackShortageDiary(),
+  backupLogs: [],
+  lastBackupTime: null
 };
 
 export const api = {
@@ -2058,6 +2060,226 @@ export const api = {
     if (isElectron) return window.electronAPI.printReceipt();
     window.print();
     return Promise.resolve(true);
+  },
+
+  // Backup & Disaster Recovery Engine (Dual PC + Removable USB)
+  getAvailableBackupDrives: async () => {
+    if (isElectron && window.electronAPI?.getAvailableBackupDrives) {
+      return window.electronAPI.getAvailableBackupDrives();
+    }
+    return {
+      pc: {
+        available: true,
+        path: 'स्थानिक संगणक डाऊनलोड (PC Browser Download)',
+        label: 'स्थानिक संगणक हार्ड ड्राइव्ह (Local Browser & Auto JSON Download)'
+      },
+      usb: {
+        available: false,
+        path: '',
+        label: 'ब्राउझर मोड: डाऊनलोड झालेली फाईल पेनड्राइव्हमध्ये सेव्ह करा'
+      }
+    };
+  },
+
+  createDatabaseBackup: async (options = {}) => {
+    if (isElectron && window.electronAPI?.createDatabaseBackup) {
+      return window.electronAPI.createDatabaseBackup(options);
+    }
+
+    // Web Fallback: Create Comprehensive JSON Snapshot & Trigger Instant File Download
+    const store = fallbackStorage.storeProfile || DEFAULT_STORE_PROFILE;
+    const safeStore = (store.store_name || 'GaavPharma').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const tsStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+    const filename = `GaavPharma_Backup_${safeStore}_${tsStr}.json`;
+
+    const snapshot = {
+      version: '1.0.0',
+      software: 'GaavPharma Pharmacy Management System',
+      created_at: now.toISOString(),
+      storeProfile: fallbackStorage.storeProfile,
+      license: fallbackStorage.license,
+      users: fallbackStorage.users,
+      featureToggles: fallbackStorage.featureToggles,
+      products: fallbackStorage.products,
+      customers: fallbackStorage.customers,
+      invoices: fallbackStorage.invoices,
+      distributors: fallbackStorage.distributors,
+      purchases: fallbackStorage.purchases,
+      distributorLedger: fallbackStorage.distributorLedger,
+      debitNotes: fallbackStorage.debitNotes,
+      shortageDiary: fallbackStorage.shortageDiary
+    };
+
+    const jsonStr = JSON.stringify(snapshot, null, 2);
+    const fileSize = jsonStr.length;
+
+    const logEntry = {
+      id: Date.now(),
+      filename,
+      backup_path: 'Downloads / Local Storage',
+      backup_type: options.backupType || 'pc',
+      file_size_bytes: fileSize,
+      status: 'success',
+      created_at: now.toISOString(),
+      exists_on_disk: true
+    };
+    fallbackStorage.backupLogs.unshift(logEntry);
+    fallbackStorage.lastBackupTime = now.toISOString();
+
+    // Save to LocalStorage
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_last_backup_snapshot', jsonStr);
+        localStorage.setItem('gaavpharma_last_backup_time', now.toISOString());
+
+        // Append to backup history in localStorage
+        const rawLogs = localStorage.getItem('gaavpharma_backup_logs');
+        const logs = rawLogs ? JSON.parse(rawLogs) : [];
+        logs.unshift(logEntry);
+        localStorage.setItem('gaavpharma_backup_logs', JSON.stringify(logs.slice(0, 50)));
+
+        // Trigger automatic file download if in browser
+        if (typeof document !== 'undefined' && options.download !== false) {
+          const blob = new Blob([jsonStr], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        }
+      } catch (e) {
+        console.warn('LocalStorage backup write warning:', e);
+      }
+    }
+
+    return {
+      success: true,
+      filename,
+      fileSize,
+      timestamp: now.toISOString(),
+      results: [
+        {
+          destination: 'pc',
+          path: 'स्थानिक डाऊनलोड फोल्डर (PC Downloads)',
+          size: fileSize,
+          status: 'SUCCESS'
+        }
+      ]
+    };
+  },
+
+  getBackupHistory: async (limit = 50) => {
+    if (isElectron && window.electronAPI?.getBackupHistory) {
+      return window.electronAPI.getBackupHistory(limit);
+    }
+    if (fallbackStorage.backupLogs && fallbackStorage.backupLogs.length > 0) {
+      return fallbackStorage.backupLogs.slice(0, limit);
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('gaavpharma_backup_logs');
+        if (raw) {
+          const logs = JSON.parse(raw);
+          if (Array.isArray(logs)) return logs.slice(0, limit);
+        }
+      } catch (e) {}
+    }
+    return [];
+  },
+
+  restoreDatabaseFromBackup: async (backupDataOrPath) => {
+    if (isElectron && window.electronAPI?.restoreDatabaseFromBackup && typeof backupDataOrPath === 'string' && !backupDataOrPath.trim().startsWith('{')) {
+      return window.electronAPI.restoreDatabaseFromBackup(backupDataOrPath);
+    }
+
+    // Web Fallback: Restore from parsed object or JSON string
+    try {
+      let data = backupDataOrPath;
+      if (typeof data === 'string') {
+        data = JSON.parse(data);
+      }
+
+      if (!data || typeof data !== 'object') {
+        throw new Error('अवैध बॅकअप फाईल संरचना (Invalid Backup Data)');
+      }
+
+      if (data.storeProfile) {
+        fallbackStorage.storeProfile = data.storeProfile;
+        if (typeof window !== 'undefined') localStorage.setItem('gaavpharma_store_profile', JSON.stringify(data.storeProfile));
+      }
+      if (data.products) {
+        fallbackStorage.products = data.products;
+        if (typeof window !== 'undefined') localStorage.setItem('gaavpharma_products', JSON.stringify(data.products));
+      }
+      if (data.customers) {
+        fallbackStorage.customers = data.customers;
+        if (typeof window !== 'undefined') localStorage.setItem('gaavpharma_customers', JSON.stringify(data.customers));
+      }
+      if (data.invoices) {
+        fallbackStorage.invoices = data.invoices;
+        if (typeof window !== 'undefined') localStorage.setItem('gaavpharma_invoices', JSON.stringify(data.invoices));
+      }
+      if (data.distributors) {
+        fallbackStorage.distributors = data.distributors;
+        if (typeof window !== 'undefined') localStorage.setItem('gaavpharma_distributors', JSON.stringify(data.distributors));
+      }
+      if (data.purchases) {
+        fallbackStorage.purchases = data.purchases;
+        if (typeof window !== 'undefined') localStorage.setItem('gaavpharma_purchases', JSON.stringify(data.purchases));
+      }
+      if (data.distributorLedger) {
+        fallbackStorage.distributorLedger = data.distributorLedger;
+        if (typeof window !== 'undefined') localStorage.setItem('gaavpharma_distributor_ledger', JSON.stringify(data.distributorLedger));
+      }
+      if (data.debitNotes) {
+        fallbackStorage.debitNotes = data.debitNotes;
+        if (typeof window !== 'undefined') localStorage.setItem('gaavpharma_debit_notes', JSON.stringify(data.debitNotes));
+      }
+      if (data.shortageDiary) {
+        fallbackStorage.shortageDiary = data.shortageDiary;
+        if (typeof window !== 'undefined') localStorage.setItem('gaavpharma_shortage_diary', JSON.stringify(data.shortageDiary));
+      }
+      if (data.featureToggles) {
+        fallbackStorage.featureToggles = data.featureToggles;
+        if (typeof window !== 'undefined') localStorage.setItem('gaavpharma_feature_toggles', JSON.stringify(data.featureToggles));
+      }
+
+      return { success: true, message: 'डेटाबेस यशस्वीरीत्या पूर्ववत (Restore) केला गेला.' };
+    } catch (err) {
+      throw new Error(`डेटा रिस्टोर करताना त्रुटी आली: ${err.message}`);
+    }
+  },
+
+  getLastBackupTimestamp: async () => {
+    if (isElectron && window.electronAPI?.getLastBackupTimestamp) {
+      return window.electronAPI.getLastBackupTimestamp();
+    }
+    if (fallbackStorage.lastBackupTime) {
+      return fallbackStorage.lastBackupTime;
+    }
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('gaavpharma_last_backup_time') || null;
+    }
+    return null;
+  },
+
+  selectBackupFile: async () => {
+    if (isElectron && window.electronAPI?.selectBackupFile) {
+      return window.electronAPI.selectBackupFile();
+    }
+    return null;
+  },
+
+  selectFolder: async () => {
+    if (isElectron && window.electronAPI?.selectFolder) {
+      return window.electronAPI.selectFolder();
+    }
+    return null;
   }
 };
 
