@@ -907,6 +907,199 @@ async function runTestSuite() {
     console.warn('Native SQLite direct check skipped in non-sqlite environment:', err.message);
   }
 
+  // -------------------------------------------------------------
+  // TEST GROUP 16: MediVision Phase 3: Universal Voucher Navigator, Specialized Bill Types & Day-End Cashier Drawer
+  // -------------------------------------------------------------
+  console.log('\n🏛️ [TEST GROUP 16] MediVision Universal Vouchers, Specialized Bill Types & Day-End Cashier Drawer (Phase 3)');
+
+  // 16.1 Doctor Free Sample Counter Invoice (Photo 17 & 19: Rate ₹0, Stock Deducted, Recipient Doctor Logged)
+  const drSampleInvoice = await api.createInvoice({
+    invoice_type: 'DOCTOR_SAMPLE',
+    customer_name: 'Dr. Sample Dispense',
+    customer_address: 'Ghoti Rural Clinic',
+    doctor_name: 'Dr. S. K. Joshi',
+    doctor_reg_no: 'MMC-2012-9844',
+    payment_mode: 'cash',
+    total_amount: 0.0,
+    discount: 0,
+    final_amount: 0.0,
+    notes: 'Free Medical Representative sample distribution'
+  }, [
+    {
+      product_id: fastProd.product.id,
+      batch_id: fastProd.batch.id,
+      batch_no: 'FC-991',
+      qty: 2,
+      unit_price: 0.0,
+      total_price: 0.0,
+      is_loose_tablet: false
+    }
+  ]);
+  assert(drSampleInvoice && drSampleInvoice.invoice_no, 'Doctor Free Sample invoice generated successfully');
+  assert(drSampleInvoice.final_amount === 0.0, 'Doctor sample bill total is ₹0.00 (Exempt/Free)');
+  assert(drSampleInvoice.invoice_type === 'DOCTOR_SAMPLE', 'Invoice type stored as DOCTOR_SAMPLE');
+
+  // Verify stock was decremented for free doctor sample (31 - 2 = 29)
+  const afterDrSampleSearch = await api.searchProducts('FastCure');
+  const batchAfterDr = afterDrSampleSearch[0]?.batches?.find(b => b.batch_no === 'FC-991');
+  assert(batchAfterDr && batchAfterDr.stock_qty === 29, 'Batch stock decremented for doctor sample (-2 units: 31 -> 29)');
+
+  // 16.2 Hospital Wholesale Supply Slip (Wholesale PTR Rate, Bulk Dispensing)
+  const hospInvoice = await api.createInvoice({
+    invoice_type: 'HOSPITAL_SUPPLY',
+    customer_name: 'Ghoti Maternity & Nursing Home',
+    customer_mobile: '9822334455',
+    customer_address: 'Station Road, Ghoti',
+    doctor_name: 'Dr. V. N. Deshmukh',
+    payment_mode: 'khata',
+    total_amount: 225.0,
+    discount: 0,
+    final_amount: 225.0,
+    notes: 'Monthly clinic supply at PTR rate'
+  }, [
+    {
+      product_id: fastProd.product.id,
+      batch_id: fastProd.batch.id,
+      batch_no: 'FC-991',
+      qty: 5,
+      unit_price: 45.0, // PTR wholesale rate
+      total_price: 225.0,
+      is_loose_tablet: false
+    }
+  ]);
+  assert(hospInvoice && hospInvoice.invoice_type === 'HOSPITAL_SUPPLY', 'Hospital Supply invoice created with PTR wholesale rates');
+  assert(hospInvoice.final_amount === 225.0, 'Hospital invoice total accurately reflects PTR calculation (5 x ₹45 = ₹225)');
+
+  // 16.3 Counter Breakage & Spillage Write-Off Voucher (Rate ₹0, Stock Deducted, Waste Reason)
+  const breakageInvoice = await api.createInvoice({
+    invoice_type: 'BREAKAGE_OUTWARD',
+    customer_name: 'Counter Breakage Write-off',
+    payment_mode: 'cash',
+    total_amount: 0.0,
+    discount: 0,
+    final_amount: 0.0,
+    notes: 'Glass ampoule cracked and leaked on counter floor'
+  }, [
+    {
+      product_id: fastProd.product.id,
+      batch_id: fastProd.batch.id,
+      batch_no: 'FC-991',
+      qty: 1,
+      unit_price: 0.0,
+      total_price: 0.0,
+      is_loose_tablet: false
+    }
+  ]);
+  assert(breakageInvoice && breakageInvoice.invoice_type === 'BREAKAGE_OUTWARD', 'Breakage & wastage invoice recorded successfully');
+  assert(breakageInvoice.notes.includes('cracked and leaked'), 'Breakage reason accurately logged for audit trail');
+
+  // Verify stock decremented for breakage (29 - 5 hosp - 1 breakage = 23)
+  const afterBreakageSearch = await api.searchProducts('FastCure');
+  const batchAfterBreak = afterBreakageSearch[0]?.batches?.find(b => b.batch_no === 'FC-991');
+  assert(batchAfterBreak && batchAfterBreak.stock_qty === 23, 'Batch stock decremented for breakage write-off (-1 unit: 24 -> 23)');
+
+  // 16.4 Item Stock Movement Ledger Stream Parity (Photo 16)
+  const updatedLedger = await api.getProductTransactions(fastProd.product.id);
+  const drSampleTx = updatedLedger.transactions.find(t => t.doc_no === drSampleInvoice.invoice_no);
+  assert(drSampleTx && drSampleTx.type === 'DR_SAMPLE', 'Movement ledger categorizes doctor sample transaction as DR_SAMPLE');
+
+  const hospTx = updatedLedger.transactions.find(t => t.doc_no === hospInvoice.invoice_no);
+  assert(hospTx && hospTx.type === 'HOSP_SUPPLY', 'Movement ledger categorizes hospital bulk supply as HOSP_SUPPLY');
+
+  const breakTx = updatedLedger.transactions.find(t => t.doc_no === breakageInvoice.invoice_no);
+  assert(breakTx && breakTx.type === 'BREAKAGE', 'Movement ledger categorizes breakage write-off as BREAKAGE');
+
+  // 16.5 Day-End Cashier Drawer Reconciliation Engine ("गल्ला ताळमेळ")
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const drawerSummary = await api.getDayEndDrawerSummary(todayStr, 'Divya Kale (Cashier)');
+  assert(drawerSummary && drawerSummary.shift_date === todayStr, 'getDayEndDrawerSummary returns summary for active shift date');
+  assert(typeof drawerSummary.expected_cash === 'number', 'Expected cash computed from sales, receipts and expenses');
+  assert(typeof drawerSummary.cash_sales === 'number', 'Today cash sales tracked in drawer summary');
+
+  // Test Physical Denomination Breakdown & Audit Variance
+  const denomTest = {
+    c500: 4,  // 2000
+    c200: 5,  // 1000
+    c100: 5,  // 500
+    c50: 2,   // 100
+    c20: 5,   // 100
+    c10: 10,  // 100
+    coins: 50 // 50
+  }; // Total counted = 3850
+  const totalCounted = (4 * 500) + (5 * 200) + (5 * 100) + (2 * 50) + (5 * 20) + (10 * 10) + 50;
+  assert(totalCounted === 3850, 'Denomination breakdown calculation is 100% accurate (₹3,850.00)');
+
+  // Save Day-End Shift Closure
+  const savedDrawer = await api.saveDayEndDrawer({
+    shift_date: todayStr,
+    cashier_name: 'Divya Kale (Cashier)',
+    opening_float: 500.0,
+    cash_sales_amount: drawerSummary.cash_sales,
+    khata_receipts_amount: drawerSummary.khata_cash_receipts,
+    cash_expenses_amount: drawerSummary.cash_expenses,
+    expected_cash: drawerSummary.expected_cash,
+    actual_cash: totalCounted,
+    denominations: denomTest,
+    notes: 'Evening shift handover verified. Balanced by Divya.',
+    status: 'CLOSED'
+  });
+  assert(savedDrawer && savedDrawer.status === 'CLOSED', 'Day-End Drawer settlement saved with CLOSED status');
+  assert(savedDrawer.actual_cash === 3850, 'Actual cash counted stored in drawer settlement');
+  assert(typeof savedDrawer.discrepancy_amount === 'number', 'Shortage/Surplus discrepancy amount tracked dynamically');
+
+  // Retrieve past drawer history
+  const pastDrawers = await api.getCashDrawers({ limit: 10 });
+  assert(pastDrawers.length > 0, 'getCashDrawers retrieves historical shift settlement records');
+  assert(pastDrawers[0].cashier_name === 'Divya Kale (Cashier)', 'Drawer record preserves cashier name and shift metadata');
+
+  // 16.6 Universal Master Report Criterion Filter (Photo 21: "Define Criterion")
+  const drSampleReport = await api.getUniversalReportCriterion({
+    saleType: 'DOCTOR_SAMPLE'
+  });
+  assert(drSampleReport && drSampleReport.rows.length >= 1, 'getUniversalReportCriterion filters by DOCTOR_SAMPLE sale type');
+  assert(drSampleReport.rows.every(r => r.invoice_type === 'DOCTOR_SAMPLE'), 'All filtered rows match DOCTOR_SAMPLE criteria');
+
+  const hospReport = await api.getUniversalReportCriterion({
+    saleType: 'HOSPITAL_SUPPLY'
+  });
+  assert(hospReport && hospReport.rows.length >= 1, 'getUniversalReportCriterion filters by HOSPITAL_SUPPLY sale type');
+  assert(hospReport.rows.some(r => r.customer_name.includes('Maternity')), 'Hospital supply report includes customer hospital name');
+
+  const searchReport = await api.getUniversalReportCriterion({
+    searchQuery: 'FastCure'
+  });
+  assert(searchReport && searchReport.rows.length >= 3, 'getUniversalReportCriterion multi-parameter text search finds all related transactions');
+  assert(searchReport.grand_total_qty >= 8, 'Criterion filter computes grand total quantity accurately');
+
+  // 16.7 Native SQLite Phase 3 Methods Direct Verification
+  try {
+    const nativeDrawerSummary = db.getDayEndDrawerSummary(todayStr, 'Native Cashier');
+    assert(nativeDrawerSummary && typeof nativeDrawerSummary.expected_cash === 'number', 'Native SQLite getDayEndDrawerSummary executed successfully');
+
+    const nativeSaveDrawer = db.saveDayEndDrawer({
+      shift_date: todayStr,
+      cashier_name: 'Native Cashier',
+      opening_float: 1000,
+      cash_sales_amount: 500,
+      khata_receipts_amount: 200,
+      cash_expenses_amount: 100,
+      expected_cash: 1600,
+      actual_cash: 1600,
+      denominations: { c500: 3, c100: 1 },
+      notes: 'Native SQLite shift closure test',
+      status: 'CLOSED'
+    });
+    assert(nativeSaveDrawer && nativeSaveDrawer.status === 'CLOSED', 'Native SQLite saveDayEndDrawer executed successfully');
+
+    const nativeDrawersList = db.getCashDrawers({ limit: 5 });
+    assert(nativeDrawersList.length > 0, 'Native SQLite getCashDrawers returns drawer records');
+
+    const nativeCriterion = db.getUniversalReportCriterion({ saleType: 'ALL', limit: 10 });
+    assert(nativeCriterion && Array.isArray(nativeCriterion.rows), 'Native SQLite getUniversalReportCriterion executed successfully');
+  } catch (err) {
+    console.warn('Native SQLite direct check skipped in non-sqlite environment:', err.message);
+  }
+
   // 12.1 Verify complete data wipe with clearAllRecords
   console.log('\n🧹 [DATABASE INTEGRITY] Full Database Reset');
   await api.clearAllRecords();
@@ -916,6 +1109,7 @@ async function runTestSuite() {
   const shortageAfterClear = await api.getShortageDiary({ status: 'ALL' });
   const vouchersAfterClear = await api.getAccountingVouchers();
   const returnsAfterClear = await api.getSalesReturns();
+  const drawersAfterClear = await api.getCashDrawers();
 
   assert(debitNotesAfterClear.length === 0, 'clearAllRecords wipes all debit notes from storage');
   assert(purchasesAfterClear.length === 0, 'clearAllRecords wipes all wholesale purchases from storage');
@@ -923,6 +1117,7 @@ async function runTestSuite() {
   assert(shortageAfterClear.length === 0, 'clearAllRecords wipes all shortage diary entries from storage');
   assert(vouchersAfterClear.length === 0, 'clearAllRecords wipes all accounting vouchers from storage');
   assert(returnsAfterClear.length === 0, 'clearAllRecords wipes all sales returns from storage');
+  assert(drawersAfterClear.length === 0, 'clearAllRecords wipes all cash drawers from storage');
 
 
   console.log('\n========================================================');

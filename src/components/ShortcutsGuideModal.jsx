@@ -31,12 +31,15 @@ export default function ShortcutsGuideModal({ isOpen, onClose }) {
 
   const billingShortcuts = [
     { key: 'Alt+1..0', alt: '1-10 Slots', label: '१० ग्राहक बिल स्लॉट (10 Multi-Bill Slots)', desc: '१० स्वतंत्र ग्राहकांची बिले एकाच वेळी सुरू ठेवा व १ सेकंदात स्विच करा' },
+    { key: 'Alt+V', alt: 'Voucher Menu', label: 'वाऊचर प्रकार मेनू (Universal Voucher Menu)', desc: 'संख्या ० ते ९ दाबून कोणत्याही वाऊचरवर त्वरित उडी मारा (Photo 18)' },
+    { key: 'Shift+D', alt: 'Cash Drawer', label: 'गल्ला ताळमेळ व क्लोजिंग (Day-End Reconciliation)', desc: 'प्रत्यक्ष रोख नोटा मोजणी (५००, २००...) vs सिस्टीम अपेक्षित कॅश' },
+    { key: 'Ctrl+B', alt: 'Bill Type', label: 'बिल प्रकार टॉगल (Specialized Bill Types)', desc: 'किरकोळ (MRP) ➔ हॉस्पिटल (PTR) ➔ डॉक्टर सॅम्पल (₹0) ➔ फुटतूट (₹0)' },
+    { key: 'Alt+C', alt: 'Criterion', label: 'निकष व्याख्या व शोध (Define Criterion Filter)', desc: 'विक्री प्रकार, कंपनी, सॉल्ट व तारखेनुसार संपूर्ण दुकानाचे रेकॉर्ड्स शोधा' },
     { key: 'F2', alt: 'Ctrl+N', label: 'नवीन बिल (New Bill)', desc: 'काऊंटर रिकामे करून नवीन ग्राहकाचे बिल सुरू करा' },
     { key: 'F3 / Ins', alt: 'Fast Item', label: 'जलद औषध व बॅच नोंद (In-Line Fast Item)', desc: 'काऊंटर न सोडता ५ सेकंदात औषध व बॅच तयार करून थेट बिलात जोडा' },
     { key: 'F4', alt: 'Ctrl+F / /', label: 'औषध शोध (Search Medicine)', desc: 'औषध शोधणे व बारकोड स्कॅनिंग इनपुटवर त्वरित फोकस करा' },
     { key: 'Alt+T', alt: 'Stock Ledger', label: 'औषध स्टॉक व ट्रॅन्झॅक्शन लेजर (Item Movement)', desc: 'खरेदी, विक्री, सप्लायर डेबिट व ग्राहक परताव्याची ऐतिहासिक नोंदवही' },
     { key: 'Alt+R', alt: 'Sales Return', label: 'ग्राहक औषध रिटर्न / क्रेडिट नोट (Sales Return)', desc: 'उरलेले औषध जमा करून स्टॉक वाढवा आणि रोख/खाते परतावा द्या' },
-    { key: '↑ / ↓', alt: 'Arrow Keys', label: 'यादी नेव्हिगेशन (Navigate List)', desc: 'माऊस न वापरता औषध शोध ड्रॉपडाउनमधून औषध निवडा' },
     { key: 'Enter', alt: 'Available Stock', label: 'बॅच पॉप-अप व निवड (Available Stock)', desc: 'FEFO नुसार योग्य बॅच निवडून त्वरित बिलात जोडा' },
     { key: 'F8', alt: 'Alt+P', label: 'पेमेंट मोड बदला (Cycle Payment)', desc: 'रोख (Cash) ➔ UPI ➔ खाते (Khata) ➔ कार्ड मध्ये टॉगल करा' },
     { key: 'F9', alt: 'Ctrl+Enter', label: 'विक्री पूर्ण व प्रिंट (Complete Sale)', desc: 'बिल पूर्ण करून थर्मल पावती त्वरित प्रिंट करा' },

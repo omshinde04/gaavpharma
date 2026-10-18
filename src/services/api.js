@@ -506,6 +506,17 @@ const loadFallbackSalesReturns = () => {
   return [];
 };
 
+const loadFallbackCashDrawers = () => {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('gaavpharma_cash_drawers') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  return [];
+};
+
 // In-memory fallback mock with localStorage persistence for web dev preview
 const fallbackStorage = {
   license: loadFallbackLicense(),
@@ -522,6 +533,7 @@ const fallbackStorage = {
   shortageDiary: loadFallbackShortageDiary(),
   vouchers: loadFallbackVouchers(),
   salesReturns: loadFallbackSalesReturns(),
+  cashDrawers: loadFallbackCashDrawers(),
   backupLogs: [],
   lastBackupTime: null
 };
@@ -2290,9 +2302,14 @@ export const api = {
       for (const item of (inv.items || [])) {
         if (Number(item.product_id) === pId) {
           if (!bId || Number(item.batch_id) === bId) {
+            let movementType = 'SALE';
+            if (inv.invoice_type === 'DOCTOR_SAMPLE') movementType = 'DR_SAMPLE';
+            else if (inv.invoice_type === 'BREAKAGE_OUTWARD') movementType = 'BREAKAGE';
+            else if (inv.invoice_type === 'HOSPITAL_SUPPLY') movementType = 'HOSP_SUPPLY';
+
             sales.push({
               date: inv.created_at ? inv.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
-              type: 'SALE',
+              type: movementType,
               doc_no: inv.invoice_no,
               party_name: inv.customer_name || 'Cash Customer',
               batch_no: item.batch_no,
@@ -2507,6 +2524,303 @@ export const api = {
     return { ...found, items };
   },
 
+  // ==========================================
+  // PHASE 3: DAY-END CASHIER DRAWER RECONCILIATION ("गल्ला ताळमेळ")
+  // ==========================================
+  getDayEndDrawerSummary: async (dateStr = null, cashierName = 'Main Cashier') => {
+    if (isElectron && window.electronAPI?.getDayEndDrawerSummary) {
+      return window.electronAPI.getDayEndDrawerSummary(dateStr, cashierName);
+    }
+    const targetDate = dateStr || new Date().toISOString().slice(0, 10);
+
+    // Sales Breakdown
+    let cashSales = 0;
+    let upiSales = 0;
+    let khataSales = 0;
+    let cardSales = 0;
+    let totalSales = 0;
+    let totalInvoicesCount = 0;
+
+    for (const inv of (fallbackStorage.invoices || [])) {
+      const invDate = inv.created_at ? inv.created_at.slice(0, 10) : '';
+      if (invDate === targetDate) {
+        const amt = parseFloat(inv.final_amount) || 0;
+        totalSales += amt;
+        totalInvoicesCount++;
+        const mode = (inv.payment_mode || 'cash').toLowerCase();
+        if (mode === 'cash') cashSales += amt;
+        else if (mode === 'upi') upiSales += amt;
+        else if (mode === 'khata') khataSales += amt;
+        else if (mode === 'card') cardSales += amt;
+      }
+    }
+
+    // Cash Refunds from Sales Returns
+    let cashRefunds = 0;
+    let returnCount = 0;
+    for (const sr of (fallbackStorage.salesReturns || [])) {
+      const rDate = sr.return_date || (sr.created_at ? sr.created_at.slice(0, 10) : '');
+      if (rDate === targetDate && (sr.refund_mode || 'CASH').toUpperCase() === 'CASH') {
+        cashRefunds += parseFloat(sr.total_refund_amount) || 0;
+        returnCount++;
+      }
+    }
+
+    // Khata Cash Receipts
+    let khataReceipts = 0;
+    let receiptsCount = 0;
+    for (const v of (fallbackStorage.vouchers || [])) {
+      const vDate = v.date || (v.created_at ? v.created_at.slice(0, 10) : '');
+      if (vDate === targetDate && v.voucher_type === 'RECEIPT' && (v.payment_mode || 'CASH').toUpperCase() === 'CASH') {
+        khataReceipts += parseFloat(v.amount) || 0;
+        receiptsCount++;
+      }
+    }
+
+    // Cash Expenses
+    let cashExpenses = 0;
+    let expenseCount = 0;
+    for (const v of (fallbackStorage.vouchers || [])) {
+      const vDate = v.date || (v.created_at ? v.created_at.slice(0, 10) : '');
+      if (vDate === targetDate && v.voucher_type === 'PAYMENT' && (v.payment_mode || 'CASH').toUpperCase() === 'CASH') {
+        cashExpenses += parseFloat(v.amount) || 0;
+        expenseCount++;
+      }
+    }
+
+    // Existing drawer record
+    const existingDrawer = (fallbackStorage.cashDrawers || []).find(d => (d.shift_date || '').slice(0, 10) === targetDate);
+
+    let openingFloat = 0;
+    if (existingDrawer) {
+      openingFloat = existingDrawer.opening_float || 0;
+    } else {
+      const prevDrawers = (fallbackStorage.cashDrawers || [])
+        .filter(d => (d.shift_date || '').slice(0, 10) < targetDate && d.status === 'CLOSED')
+        .sort((a, b) => (b.shift_date || '').localeCompare(a.shift_date || ''));
+      if (prevDrawers.length > 0 && prevDrawers[0].actual_cash > 0) {
+        openingFloat = prevDrawers[0].actual_cash;
+      }
+    }
+
+    const expectedCash = Number((openingFloat + cashSales + khataReceipts - cashRefunds - cashExpenses).toFixed(2));
+    const actualCash = existingDrawer ? existingDrawer.actual_cash : expectedCash;
+    const discrepancy = Number((actualCash - expectedCash).toFixed(2));
+
+    let denominations = { c500: 0, c200: 0, c100: 0, c50: 0, c20: 0, c10: 0, coins: 0 };
+    if (existingDrawer && existingDrawer.denominations) {
+      denominations = typeof existingDrawer.denominations === 'string'
+        ? JSON.parse(existingDrawer.denominations)
+        : existingDrawer.denominations;
+    }
+
+    return {
+      shift_date: targetDate,
+      cashier_name: existingDrawer ? existingDrawer.cashier_name : cashierName,
+      opening_float: openingFloat,
+      cash_sales: Number(cashSales.toFixed(2)),
+      upi_sales: Number(upiSales.toFixed(2)),
+      khata_sales: Number(khataSales.toFixed(2)),
+      card_sales: Number(cardSales.toFixed(2)),
+      total_sales: Number(totalSales.toFixed(2)),
+      total_invoices_count: totalInvoicesCount,
+      cash_refunds: Number(cashRefunds.toFixed(2)),
+      return_count: returnCount,
+      khata_cash_receipts: Number(khataReceipts.toFixed(2)),
+      receipts_count: receiptsCount,
+      cash_expenses: Number(cashExpenses.toFixed(2)),
+      expense_count: expenseCount,
+      expected_cash: expectedCash,
+      actual_cash: actualCash,
+      discrepancy: discrepancy,
+      denominations: denominations,
+      notes: existingDrawer ? existingDrawer.notes || '' : '',
+      status: existingDrawer ? existingDrawer.status : 'OPEN',
+      drawer_id: existingDrawer ? existingDrawer.id : null,
+      closed_at: existingDrawer ? existingDrawer.closed_at : null
+    };
+  },
+
+  saveDayEndDrawer: async (data) => {
+    if (isElectron && window.electronAPI?.saveDayEndDrawer) {
+      return window.electronAPI.saveDayEndDrawer(data);
+    }
+    const shiftDate = data.shift_date || new Date().toISOString().slice(0, 10);
+    const cashierName = data.cashier_name || 'Main Cashier';
+    const openingFloat = parseFloat(data.opening_float) || 0;
+    const cashSales = parseFloat(data.cash_sales_amount || data.cash_sales) || 0;
+    const khataReceipts = parseFloat(data.khata_receipts_amount || data.khata_cash_receipts) || 0;
+    const cashExpenses = parseFloat(data.cash_expenses_amount || data.cash_expenses) || 0;
+    const expectedCash = parseFloat(data.expected_cash) || 0;
+    const actualCash = parseFloat(data.actual_cash) || 0;
+    const discrepancy = Number((actualCash - expectedCash).toFixed(2));
+    const denominations = data.denominations || {};
+    const notes = data.notes || '';
+    const status = data.status || 'CLOSED';
+
+    const existingIdx = (fallbackStorage.cashDrawers || []).findIndex(d => (d.shift_date || '').slice(0, 10) === shiftDate);
+    let record;
+    if (existingIdx > -1) {
+      record = {
+        ...fallbackStorage.cashDrawers[existingIdx],
+        cashier_name: cashierName,
+        opening_float: openingFloat,
+        cash_sales_amount: cashSales,
+        khata_receipts_amount: khataReceipts,
+        cash_expenses_amount: cashExpenses,
+        expected_cash: expectedCash,
+        actual_cash: actualCash,
+        discrepancy_amount: discrepancy,
+        denominations,
+        notes,
+        status,
+        closed_at: new Date().toISOString()
+      };
+      fallbackStorage.cashDrawers[existingIdx] = record;
+    } else {
+      record = {
+        id: Date.now(),
+        shift_date: shiftDate,
+        cashier_name: cashierName,
+        opening_float: openingFloat,
+        cash_sales_amount: cashSales,
+        khata_receipts_amount: khataReceipts,
+        cash_expenses_amount: cashExpenses,
+        expected_cash: expectedCash,
+        actual_cash: actualCash,
+        discrepancy_amount: discrepancy,
+        denominations,
+        notes,
+        status,
+        created_at: new Date().toISOString(),
+        closed_at: new Date().toISOString()
+      };
+      fallbackStorage.cashDrawers.unshift(record);
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gaavpharma_cash_drawers', JSON.stringify(fallbackStorage.cashDrawers));
+      } catch (e) {}
+    }
+    return record;
+  },
+
+  getCashDrawers: async (filters = {}) => {
+    if (isElectron && window.electronAPI?.getCashDrawers) {
+      return window.electronAPI.getCashDrawers(filters);
+    }
+    let list = [...(fallbackStorage.cashDrawers || [])];
+    if (filters.startDate) {
+      list = list.filter(d => (d.shift_date || '').slice(0, 10) >= filters.startDate);
+    }
+    if (filters.endDate) {
+      list = list.filter(d => (d.shift_date || '').slice(0, 10) <= filters.endDate);
+    }
+    list.sort((a, b) => (b.shift_date || '').localeCompare(a.shift_date || ''));
+    if (filters.limit) {
+      list = list.slice(0, parseInt(filters.limit, 10));
+    }
+    return list;
+  },
+
+  // ==========================================
+  // PHASE 3: UNIVERSAL MASTER REPORT CRITERION FILTER (Photo 21: "Define Criterion")
+  // ==========================================
+  getUniversalReportCriterion: async (criterion = {}) => {
+    if (isElectron && window.electronAPI?.getUniversalReportCriterion) {
+      return window.electronAPI.getUniversalReportCriterion(criterion);
+    }
+    let rows = [];
+    for (const inv of (fallbackStorage.invoices || [])) {
+      const invDate = inv.created_at ? inv.created_at.slice(0, 10) : '';
+
+      // Date filter
+      if (criterion.startDate && invDate < criterion.startDate) continue;
+      if (criterion.endDate && invDate > criterion.endDate) continue;
+
+      // Sale Type filter
+      if (criterion.saleType && criterion.saleType !== 'ALL') {
+        const st = criterion.saleType.toUpperCase();
+        if (['CASH', 'UPI', 'KHATA', 'CARD'].includes(st)) {
+          if ((inv.payment_mode || 'cash').toUpperCase() !== st) continue;
+        } else {
+          if ((inv.invoice_type || 'RETAIL').toUpperCase() !== st) continue;
+        }
+      }
+
+      for (const item of (inv.items || [])) {
+        const prod = fallbackStorage.products.find(p => p.id === Number(item.product_id) || p.name === item.product_name) || {};
+        
+        // Category filter
+        if (criterion.category && criterion.category !== 'ALL') {
+          if ((prod.category || '').toLowerCase() !== criterion.category.toLowerCase()) continue;
+        }
+
+        // Company filter
+        if (criterion.company && criterion.company.trim()) {
+          const comp = criterion.company.trim().toLowerCase();
+          if (!(prod.company || '').toLowerCase().includes(comp)) continue;
+        }
+
+        // Search Query filter
+        if (criterion.searchQuery && criterion.searchQuery.trim()) {
+          const q = criterion.searchQuery.trim().toLowerCase();
+          const match = (prod.name || '').toLowerCase().includes(q) ||
+            (prod.generic_salt || '').toLowerCase().includes(q) ||
+            (item.batch_no || '').toLowerCase().includes(q) ||
+            (inv.customer_name || '').toLowerCase().includes(q) ||
+            (inv.doctor_name || '').toLowerCase().includes(q);
+          if (!match) continue;
+        }
+
+        rows.push({
+          invoice_id: inv.id,
+          invoice_no: inv.invoice_no,
+          invoice_type: inv.invoice_type || 'RETAIL',
+          created_at: inv.created_at,
+          invoice_date: invDate,
+          customer_name: inv.customer_name || 'Cash Customer',
+          customer_mobile: inv.customer_mobile,
+          customer_address: inv.customer_address,
+          doctor_name: inv.doctor_name,
+          payment_mode: inv.payment_mode || 'cash',
+          final_amount: inv.final_amount,
+          discount: inv.discount || 0,
+          item_id: item.id || Math.random(),
+          qty: item.qty,
+          unit_price: item.unit_price,
+          total_price: item.total_price,
+          product_id: item.product_id,
+          product_name: prod.name || item.product_name,
+          generic_salt: prod.generic_salt,
+          category: prod.category,
+          company: prod.company,
+          rack_location: prod.rack_location,
+          batch_no: item.batch_no,
+          expiry_date: item.expiry_date
+        });
+      }
+    }
+
+    let grandTotalAmount = 0;
+    let grandTotalQty = 0;
+    const uniqueInvoices = new Set();
+    for (const r of rows) {
+      grandTotalAmount += r.total_price || 0;
+      grandTotalQty += r.qty || 0;
+      uniqueInvoices.add(r.invoice_id);
+    }
+
+    return {
+      rows,
+      total_records: rows.length,
+      total_invoices: uniqueInvoices.size,
+      grand_total_qty: grandTotalQty,
+      grand_total_amount: Number(grandTotalAmount.toFixed(2))
+    };
+  },
+
   // Clear All Records / Reset Ledger
   clearAllRecords: async () => {
     if (isElectron) return window.electronAPI.clearAllRecords();
@@ -2518,6 +2832,7 @@ export const api = {
     fallbackStorage.shortageDiary = [];
     fallbackStorage.vouchers = [];
     fallbackStorage.salesReturns = [];
+    fallbackStorage.cashDrawers = [];
     fallbackStorage.distributors.forEach(d => { d.pending_balance = 0; });
 
     if (typeof window !== 'undefined') {
@@ -2530,6 +2845,7 @@ export const api = {
         localStorage.setItem('gaavpharma_shortage_diary', JSON.stringify([]));
         localStorage.setItem('gaavpharma_vouchers', JSON.stringify([]));
         localStorage.setItem('gaavpharma_sales_returns', JSON.stringify([]));
+        localStorage.setItem('gaavpharma_cash_drawers', JSON.stringify([]));
         localStorage.setItem('gaavpharma_distributors', JSON.stringify(fallbackStorage.distributors));
       } catch (e) {}
     }

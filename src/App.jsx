@@ -293,6 +293,7 @@ export default function App() {
               currentUser={currentUser}
               featureToggles={featureToggles}
               storeProfile={storeProfile}
+              onNavigateTab={setActiveTab}
             />
           )}
           {activeTab === 'expiry' && <ExpiryRadar storeProfile={storeProfile} />}

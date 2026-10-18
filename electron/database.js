@@ -110,6 +110,8 @@ function createTables() {
       total_amount REAL NOT NULL,
       discount REAL DEFAULT 0,
       final_amount REAL NOT NULL,
+      invoice_type TEXT DEFAULT 'RETAIL',
+      notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -371,6 +373,12 @@ function createTables() {
     if (!invCols.some(c => c.name === 'doctor_reg_no')) {
       db.exec("ALTER TABLE invoices ADD COLUMN doctor_reg_no TEXT;");
     }
+    if (!invCols.some(c => c.name === 'invoice_type')) {
+      db.exec("ALTER TABLE invoices ADD COLUMN invoice_type TEXT DEFAULT 'RETAIL';");
+    }
+    if (!invCols.some(c => c.name === 'notes')) {
+      db.exec("ALTER TABLE invoices ADD COLUMN notes TEXT;");
+    }
   } catch (e) {}
 
   try {
@@ -410,6 +418,26 @@ function createTables() {
       );
       CREATE INDEX IF NOT EXISTS idx_shortage_status ON shortage_diary(status);
       CREATE INDEX IF NOT EXISTS idx_shortage_distributor ON shortage_diary(distributor_id);
+
+      CREATE TABLE IF NOT EXISTS cash_drawers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shift_date TEXT NOT NULL,
+        cashier_name TEXT DEFAULT 'Main Cashier',
+        opening_float REAL DEFAULT 0,
+        cash_sales_amount REAL DEFAULT 0,
+        khata_receipts_amount REAL DEFAULT 0,
+        cash_expenses_amount REAL DEFAULT 0,
+        expected_cash REAL DEFAULT 0,
+        actual_cash REAL DEFAULT 0,
+        discrepancy_amount REAL DEFAULT 0,
+        denominations TEXT DEFAULT '{}',
+        notes TEXT,
+        status TEXT CHECK(status IN ('OPEN', 'CLOSED')) DEFAULT 'OPEN',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        closed_at DATETIME
+      );
+      CREATE INDEX IF NOT EXISTS idx_drawers_date ON cash_drawers(shift_date);
+      CREATE INDEX IF NOT EXISTS idx_drawers_status ON cash_drawers(status);
     `);
   } catch (e) {}
 }
@@ -1328,8 +1356,12 @@ function createInvoice(invoiceData, items) {
 
   const tx = db.transaction(() => {
     const insertInv = db.prepare(`
-      INSERT INTO invoices (invoice_no, customer_name, customer_mobile, customer_address, doctor_name, doctor_reg_no, payment_mode, total_amount, discount, final_amount)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO invoices (
+        invoice_no, customer_name, customer_mobile, customer_address, 
+        doctor_name, doctor_reg_no, payment_mode, total_amount, discount, 
+        final_amount, invoice_type, notes
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const invRes = insertInv.run(
@@ -1342,7 +1374,9 @@ function createInvoice(invoiceData, items) {
       invoiceData.payment_mode || 'cash',
       invoiceData.total_amount,
       invoiceData.discount || 0,
-      invoiceData.final_amount
+      invoiceData.final_amount,
+      invoiceData.invoice_type || 'RETAIL',
+      invoiceData.notes || null
     );
 
     const invoiceId = invRes.lastInsertRowid;
@@ -2712,7 +2746,12 @@ function getProductTransactions(productId, batchId = null) {
   let saleQuery = `
     SELECT 
       substr(inv.created_at, 1, 10) as date,
-      'SALE' as type,
+      CASE 
+        WHEN inv.invoice_type = 'DOCTOR_SAMPLE' THEN 'DR_SAMPLE'
+        WHEN inv.invoice_type = 'BREAKAGE_OUTWARD' THEN 'BREAKAGE'
+        WHEN inv.invoice_type = 'HOSPITAL_SUPPLY' THEN 'HOSP_SUPPLY'
+        ELSE 'SALE'
+      END as type,
       inv.invoice_no as doc_no,
       inv.customer_name as party_name,
       b.batch_no,
@@ -2922,6 +2961,304 @@ function getSalesReturnDetails(returnId) {
   return { ...returnRecord, items };
 }
 
+// ==========================================
+// PHASE 3: DAY-END CASHIER DRAWER RECONCILIATION ("गल्ला ताळमेळ")
+// ==========================================
+function getDayEndDrawerSummary(dateStr = null, cashierName = 'Main Cashier') {
+  if (!db) initDatabase();
+  const targetDate = dateStr || new Date().toISOString().slice(0, 10);
+
+  // 1. Sales Breakdown by Payment Mode for targetDate
+  const salesSummary = db.prepare(`
+    SELECT 
+      COALESCE(SUM(CASE WHEN payment_mode = 'cash' THEN final_amount ELSE 0 END), 0) as cash_sales,
+      COALESCE(SUM(CASE WHEN payment_mode = 'upi' THEN final_amount ELSE 0 END), 0) as upi_sales,
+      COALESCE(SUM(CASE WHEN payment_mode = 'khata' THEN final_amount ELSE 0 END), 0) as khata_sales,
+      COALESCE(SUM(CASE WHEN payment_mode = 'card' THEN final_amount ELSE 0 END), 0) as card_sales,
+      COALESCE(SUM(final_amount), 0) as total_sales,
+      COUNT(id) as total_invoices_count
+    FROM invoices 
+    WHERE date(created_at) = date(?)
+  `).get(targetDate);
+
+  // 2. Cash Refunds from Customer Returns
+  const returnSummary = db.prepare(`
+    SELECT 
+      COALESCE(SUM(total_refund_amount), 0) as cash_refunds,
+      COUNT(id) as return_count
+    FROM sales_returns
+    WHERE date(created_at) = date(?) AND refund_mode = 'CASH'
+  `).get(targetDate);
+
+  // 3. Customer Khata Cash Receipts
+  const receiptsSummary = db.prepare(`
+    SELECT 
+      COALESCE(SUM(amount), 0) as khata_cash_receipts,
+      COUNT(id) as receipts_count
+    FROM accounting_vouchers
+    WHERE date(date) = date(?) AND voucher_type = 'RECEIPT' AND payment_mode = 'CASH'
+  `).get(targetDate);
+
+  // 4. Cash Expenses & Cash Payments to Distributors
+  const expenseSummary = db.prepare(`
+    SELECT 
+      COALESCE(SUM(amount), 0) as cash_expenses,
+      COUNT(id) as expense_count
+    FROM accounting_vouchers
+    WHERE date(date) = date(?) AND voucher_type = 'PAYMENT' AND payment_mode = 'CASH'
+  `).get(targetDate);
+
+  // 5. Existing drawer record for target date (if any)
+  let existingDrawer = db.prepare(`
+    SELECT * FROM cash_drawers WHERE date(shift_date) = date(?) ORDER BY id DESC LIMIT 1
+  `).get(targetDate);
+
+  // If no opening float saved yet, check previous closed drawer closing cash
+  let openingFloat = 0;
+  if (existingDrawer) {
+    openingFloat = existingDrawer.opening_float || 0;
+  } else {
+    const prevDrawer = db.prepare(`
+      SELECT actual_cash FROM cash_drawers WHERE date(shift_date) < date(?) AND status = 'CLOSED' ORDER BY shift_date DESC LIMIT 1
+    `).get(targetDate);
+    if (prevDrawer && prevDrawer.actual_cash > 0) {
+      openingFloat = prevDrawer.actual_cash;
+    }
+  }
+
+  const cashSales = salesSummary.cash_sales;
+  const khataReceipts = receiptsSummary.khata_cash_receipts;
+  const cashRefunds = returnSummary.cash_refunds;
+  const cashExpenses = expenseSummary.cash_expenses;
+
+  // Expected Cash = Opening Float + Cash Sales + Khata Receipts - Cash Refunds - Cash Expenses
+  const expectedCash = Number((openingFloat + cashSales + khataReceipts - cashRefunds - cashExpenses).toFixed(2));
+
+  let actualCash = existingDrawer ? existingDrawer.actual_cash : expectedCash;
+  let discrepancy = Number((actualCash - expectedCash).toFixed(2));
+
+  let denominations = {
+    c500: 0,
+    c200: 0,
+    c100: 0,
+    c50: 0,
+    c20: 0,
+    c10: 0,
+    coins: 0
+  };
+
+  if (existingDrawer && existingDrawer.denominations) {
+    try {
+      denominations = JSON.parse(existingDrawer.denominations);
+    } catch (e) {}
+  }
+
+  return {
+    shift_date: targetDate,
+    cashier_name: existingDrawer ? existingDrawer.cashier_name : cashierName,
+    opening_float: openingFloat,
+    cash_sales: cashSales,
+    upi_sales: salesSummary.upi_sales,
+    khata_sales: salesSummary.khata_sales,
+    card_sales: salesSummary.card_sales,
+    total_sales: salesSummary.total_sales,
+    total_invoices_count: salesSummary.total_invoices_count,
+    cash_refunds: cashRefunds,
+    return_count: returnSummary.return_count,
+    khata_cash_receipts: khataReceipts,
+    receipts_count: receiptsSummary.receipts_count,
+    cash_expenses: cashExpenses,
+    expense_count: expenseSummary.expense_count,
+    expected_cash: expectedCash,
+    actual_cash: actualCash,
+    discrepancy: discrepancy,
+    denominations: denominations,
+    notes: existingDrawer ? existingDrawer.notes || '' : '',
+    status: existingDrawer ? existingDrawer.status : 'OPEN',
+    drawer_id: existingDrawer ? existingDrawer.id : null,
+    closed_at: existingDrawer ? existingDrawer.closed_at : null
+  };
+}
+
+function saveDayEndDrawer(data) {
+  if (!db) initDatabase();
+  const shiftDate = data.shift_date || new Date().toISOString().slice(0, 10);
+  const cashierName = data.cashier_name || 'Main Cashier';
+  const openingFloat = parseFloat(data.opening_float) || 0;
+  const cashSales = parseFloat(data.cash_sales_amount || data.cash_sales) || 0;
+  const khataReceipts = parseFloat(data.khata_receipts_amount || data.khata_cash_receipts) || 0;
+  const cashExpenses = parseFloat(data.cash_expenses_amount || data.cash_expenses) || 0;
+  const expectedCash = parseFloat(data.expected_cash) || 0;
+  const actualCash = parseFloat(data.actual_cash) || 0;
+  const discrepancy = Number((actualCash - expectedCash).toFixed(2));
+  const denominationsJson = typeof data.denominations === 'string' 
+    ? data.denominations 
+    : JSON.stringify(data.denominations || {});
+  const notes = data.notes || '';
+  const status = data.status || 'CLOSED';
+
+  const existing = db.prepare(`SELECT id FROM cash_drawers WHERE date(shift_date) = date(?)`).get(shiftDate);
+
+  if (existing) {
+    db.prepare(`
+      UPDATE cash_drawers SET
+        cashier_name = ?,
+        opening_float = ?,
+        cash_sales_amount = ?,
+        khata_receipts_amount = ?,
+        cash_expenses_amount = ?,
+        expected_cash = ?,
+        actual_cash = ?,
+        discrepancy_amount = ?,
+        denominations = ?,
+        notes = ?,
+        status = ?,
+        closed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      cashierName, openingFloat, cashSales, khataReceipts, cashExpenses,
+      expectedCash, actualCash, discrepancy, denominationsJson, notes, status, existing.id
+    );
+    return db.prepare(`SELECT * FROM cash_drawers WHERE id = ?`).get(existing.id);
+  } else {
+    const res = db.prepare(`
+      INSERT INTO cash_drawers (
+        shift_date, cashier_name, opening_float, cash_sales_amount,
+        khata_receipts_amount, cash_expenses_amount, expected_cash,
+        actual_cash, discrepancy_amount, denominations, notes, status, closed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      shiftDate, cashierName, openingFloat, cashSales,
+      khataReceipts, cashExpenses, expectedCash,
+      actualCash, discrepancy, denominationsJson, notes, status
+    );
+    return db.prepare(`SELECT * FROM cash_drawers WHERE id = ?`).get(res.lastInsertRowid);
+  }
+}
+
+function getCashDrawers(filters = {}) {
+  if (!db) initDatabase();
+  let sql = `SELECT * FROM cash_drawers WHERE 1=1`;
+  const params = [];
+  if (filters.startDate) {
+    sql += ` AND date(shift_date) >= date(?)`;
+    params.push(filters.startDate);
+  }
+  if (filters.endDate) {
+    sql += ` AND date(shift_date) <= date(?)`;
+    params.push(filters.endDate);
+  }
+  sql += ` ORDER BY shift_date DESC, id DESC`;
+  if (filters.limit) {
+    sql += ` LIMIT ?`;
+    params.push(parseInt(filters.limit, 10));
+  }
+  return db.prepare(sql).all(...params);
+}
+
+// ==========================================
+// PHASE 3: UNIVERSAL MASTER REPORT CRITERION FILTER (Photo 21: "Define Criterion")
+// ==========================================
+function getUniversalReportCriterion(criterion = {}) {
+  if (!db) initDatabase();
+  let sql = `
+    SELECT 
+      inv.id as invoice_id,
+      inv.invoice_no,
+      inv.invoice_type,
+      inv.created_at,
+      substr(inv.created_at, 1, 10) as invoice_date,
+      inv.customer_name,
+      inv.customer_mobile,
+      inv.customer_address,
+      inv.doctor_name,
+      inv.payment_mode,
+      inv.final_amount,
+      inv.discount,
+      ii.id as item_id,
+      ii.qty,
+      ii.unit_price,
+      ii.total_price,
+      p.id as product_id,
+      p.name as product_name,
+      p.generic_salt,
+      p.category,
+      p.company,
+      p.rack_location,
+      b.batch_no,
+      b.expiry_date
+    FROM invoices inv
+    JOIN invoice_items ii ON ii.invoice_id = inv.id
+    JOIN products p ON p.id = ii.product_id
+    LEFT JOIN batches b ON b.id = ii.batch_id
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (criterion.saleType && criterion.saleType !== 'ALL') {
+    if (['CASH', 'UPI', 'KHATA', 'CARD'].includes(criterion.saleType.toUpperCase())) {
+      sql += ` AND LOWER(inv.payment_mode) = ?`;
+      params.push(criterion.saleType.toLowerCase());
+    } else {
+      sql += ` AND UPPER(COALESCE(inv.invoice_type, 'RETAIL')) = ?`;
+      params.push(criterion.saleType.toUpperCase());
+    }
+  }
+
+  if (criterion.startDate) {
+    sql += ` AND date(inv.created_at) >= date(?)`;
+    params.push(criterion.startDate);
+  }
+
+  if (criterion.endDate) {
+    sql += ` AND date(inv.created_at) <= date(?)`;
+    params.push(criterion.endDate);
+  }
+
+  if (criterion.category && criterion.category !== 'ALL') {
+    sql += ` AND LOWER(p.category) = ?`;
+    params.push(criterion.category.toLowerCase());
+  }
+
+  if (criterion.company && criterion.company.trim()) {
+    sql += ` AND LOWER(p.company) LIKE ?`;
+    params.push(`%${criterion.company.trim().toLowerCase()}%`);
+  }
+
+  if (criterion.searchQuery && criterion.searchQuery.trim()) {
+    const q = `%${criterion.searchQuery.trim().toLowerCase()}%`;
+    sql += ` AND (LOWER(p.name) LIKE ? OR LOWER(p.generic_salt) LIKE ? OR LOWER(b.batch_no) LIKE ? OR LOWER(inv.customer_name) LIKE ? OR LOWER(inv.doctor_name) LIKE ?)`;
+    params.push(q, q, q, q, q);
+  }
+
+  sql += ` ORDER BY inv.id DESC, ii.id ASC`;
+  if (criterion.limit) {
+    sql += ` LIMIT ?`;
+    params.push(parseInt(criterion.limit, 10));
+  }
+
+  const rows = db.prepare(sql).all(...params);
+
+  // Calculate Aggregates
+  let grandTotalAmount = 0;
+  let grandTotalQty = 0;
+  const uniqueInvoices = new Set();
+
+  for (const row of rows) {
+    grandTotalAmount += row.total_price || 0;
+    grandTotalQty += row.qty || 0;
+    uniqueInvoices.add(row.invoice_id);
+  }
+
+  return {
+    rows,
+    total_records: rows.length,
+    total_invoices: uniqueInvoices.size,
+    grand_total_qty: grandTotalQty,
+    grand_total_amount: Number(grandTotalAmount.toFixed(2))
+  };
+}
+
 function clearAllRecords() {
   if (!db) initDatabase();
   db.prepare(`DELETE FROM invoice_items`).run();
@@ -2938,6 +3275,7 @@ function clearAllRecords() {
   try {
     db.prepare(`DELETE FROM sales_return_items`).run();
     db.prepare(`DELETE FROM sales_returns`).run();
+    db.prepare(`DELETE FROM cash_drawers`).run();
   } catch {}
   db.prepare(`UPDATE distributors SET pending_balance = 0`).run();
   return { success: true };
@@ -3330,6 +3668,10 @@ module.exports = {
   createSalesReturn,
   getSalesReturns,
   getSalesReturnDetails,
+  getDayEndDrawerSummary,
+  saveDayEndDrawer,
+  getCashDrawers,
+  getUniversalReportCriterion,
   clearAllRecords,
   getAvailableBackupDrives,
   pruneOldBackups,

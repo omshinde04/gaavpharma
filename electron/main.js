@@ -150,6 +150,12 @@ function setupIpcHandlers() {
   ipcMain.handle('db:getSalesReturns', () => db.getSalesReturns());
   ipcMain.handle('db:getSalesReturnDetails', (_, returnId) => db.getSalesReturnDetails(returnId));
 
+  // Phase 3: Day-End Cashier Drawer & Universal Report Criterion
+  ipcMain.handle('db:getDayEndDrawerSummary', (_, dateStr, cashierName) => db.getDayEndDrawerSummary(dateStr, cashierName));
+  ipcMain.handle('db:saveDayEndDrawer', (_, data) => db.saveDayEndDrawer(data));
+  ipcMain.handle('db:getCashDrawers', (_, filters) => db.getCashDrawers(filters));
+  ipcMain.handle('db:getUniversalReportCriterion', (_, criterion) => db.getUniversalReportCriterion(criterion));
+
 
   // Backup & Disaster Recovery Engine
   ipcMain.handle('db:getAvailableBackupDrives', () => db.getAvailableBackupDrives());

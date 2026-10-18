@@ -89,6 +89,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSalesReturns: () => ipcRenderer.invoke('db:getSalesReturns'),
   getSalesReturnDetails: (returnId) => ipcRenderer.invoke('db:getSalesReturnDetails', returnId),
 
+  // Phase 3: Day-End Cashier Drawer & Universal Report Criterion
+  getDayEndDrawerSummary: (dateStr, cashierName) => ipcRenderer.invoke('db:getDayEndDrawerSummary', dateStr, cashierName),
+  saveDayEndDrawer: (data) => ipcRenderer.invoke('db:saveDayEndDrawer', data),
+  getCashDrawers: (filters) => ipcRenderer.invoke('db:getCashDrawers', filters),
+  getUniversalReportCriterion: (criterion) => ipcRenderer.invoke('db:getUniversalReportCriterion', criterion),
+
 
   // Backup & Disaster Recovery Engine
   getAvailableBackupDrives: () => ipcRenderer.invoke('db:getAvailableBackupDrives'),

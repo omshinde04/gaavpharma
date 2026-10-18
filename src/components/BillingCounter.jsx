@@ -29,13 +29,18 @@ import {
   Calendar,
   Building2,
   HelpCircle,
-  FileText
+  FileText,
+  ShoppingCart,
+  Filter
 } from 'lucide-react';
 import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
 import FastProductCreateModal from './FastProductCreateModal';
 import ProductTransactionsModal from './ProductTransactionsModal';
 import SalesReturnModal from './SalesReturnModal';
+import VoucherMenuModal from './VoucherMenuModal';
+import DayEndCashierModal from './DayEndCashierModal';
+import ReportCriterionModal from './ReportCriterionModal';
 
 
 // Helper to create an empty multi-bill slot (Slots 1 to 10)
@@ -49,10 +54,12 @@ const createEmptySlot = (id) => ({
   doctorRegNo: '',
   discount: 0,
   paymentMode: 'cash',
+  invoiceType: 'RETAIL',
+  notes: '',
   existingKhataBalance: null
 });
 
-export default function BillingCounter({ currentUser, featureToggles, storeProfile }) {
+export default function BillingCounter({ currentUser, featureToggles, storeProfile, onNavigateTab }) {
   const allowKhata = featureToggles?.allow_khata !== false && featureToggles?.allow_khata !== 'false' && featureToggles?.allow_khata !== 0;
   const allowLooseTablets = featureToggles?.allow_loose_tablets !== false && featureToggles?.allow_loose_tablets !== 'false' && featureToggles?.allow_loose_tablets !== 0;
   const allowWhatsApp = featureToggles?.allow_whatsapp !== false && featureToggles?.allow_whatsapp !== 'false' && featureToggles?.allow_whatsapp !== 0;
@@ -84,6 +91,8 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
   const doctorName = activeSlot.doctorName || '';
   const doctorRegNo = activeSlot.doctorRegNo || '';
   const existingKhataBalance = activeSlot.existingKhataBalance;
+  const invoiceType = activeSlot.invoiceType || 'RETAIL';
+  const slotNotes = activeSlot.notes || '';
 
   // Search & Autocomplete State (Stage 1)
   const [searchQuery, setSearchQuery] = useState('');
@@ -117,6 +126,11 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
   const [fastProductInitialName, setFastProductInitialName] = useState('');
   const [transactionsModal, setTransactionsModal] = useState(null); // { productId, productName, batchId }
   const [salesReturnModalOpen, setSalesReturnModalOpen] = useState(false);
+
+  // Phase 3 Modals State (Photos 18, 20, 21)
+  const [voucherMenuOpen, setVoucherMenuOpen] = useState(false);
+  const [dayEndDrawerOpen, setDayEndDrawerOpen] = useState(false);
+  const [reportCriterionOpen, setReportCriterionOpen] = useState(false);
 
 
   const barcodeBufferRef = useRef('');
@@ -191,10 +205,111 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     setTransactionsModal({ productId, productName, batchId });
   };
 
+  // Phase 3: Invoice Type Switching & Price Recalculation (Photos 17 & 19)
+  const setSlotInvoiceType = (newType) => {
+    const updatedCart = cart.map((item) => {
+      let unitPrice = 0;
+      if (newType === 'DOCTOR_SAMPLE' || newType === 'BREAKAGE_OUTWARD') {
+        unitPrice = 0;
+      } else if (newType === 'HOSPITAL_SUPPLY') {
+        const batch = (item.all_batches || []).find((b) => b.id === item.batch_id);
+        const ptr = batch?.purchase_rate || (item.unit_price || 100) * 0.75;
+        unitPrice = item.is_loose_tablet ? Math.round((ptr / (item.strip_size || 10)) * 100) / 100 : ptr;
+      } else {
+        const batch = (item.all_batches || []).find((b) => b.id === item.batch_id);
+        const mrp = batch?.mrp || item.unit_price || 10;
+        unitPrice = item.is_loose_tablet ? Math.round((mrp / (item.strip_size || 10)) * 100) / 100 : mrp;
+      }
+      return {
+        ...item,
+        unit_price: unitPrice,
+        total_price: Number((unitPrice * item.qty).toFixed(2))
+      };
+    });
+    updateActiveSlot({ invoiceType: newType, cart: updatedCart });
+  };
+
+  const cycleInvoiceType = () => {
+    const types = ['RETAIL', 'HOSPITAL_SUPPLY', 'DOCTOR_SAMPLE', 'BREAKAGE_OUTWARD'];
+    const currentIdx = types.indexOf(invoiceType);
+    const nextType = types[(currentIdx + 1) % types.length];
+    setSlotInvoiceType(nextType);
+  };
+
+  const handleVoucherAction = (actionId) => {
+    switch (actionId) {
+      case 'RETAIL_SALE':
+        setSlotInvoiceType('RETAIL');
+        searchInputRef.current?.focus();
+        break;
+      case 'PURCHASE_INWARD':
+        if (onNavigateTab) onNavigateTab('purchases');
+        break;
+      case 'SALES_RETURN':
+        setSalesReturnModalOpen(true);
+        break;
+      case 'DEBIT_NOTE':
+        if (onNavigateTab) onNavigateTab('expiry');
+        break;
+      case 'PAYMENT_VOUCHER':
+      case 'RECEIPT_VOUCHER':
+        if (onNavigateTab) onNavigateTab('khata');
+        break;
+      case 'STOCK_LEDGER':
+        if (focusedProduct) {
+          openTransactionsModal(focusedProduct.id, focusedProduct.name);
+        } else if (cart.length > 0) {
+          openTransactionsModal(cart[0].product_id, cart[0].product_name, cart[0].batch_id);
+        } else {
+          openFastProductModal(searchQuery);
+        }
+        break;
+      case 'FAST_PRODUCT':
+        openFastProductModal(searchQuery);
+        break;
+      case 'SHORTAGE_DIARY':
+        if (onNavigateTab) onNavigateTab('purchases');
+        break;
+      case 'DAY_END_DRAWER':
+        setDayEndDrawerOpen(true);
+        break;
+      default:
+        break;
+    }
+  };
+
   // Keyboard Shortcuts (F-Keys, Alt+1..0 for Slots, Enter-Flow)
   useEffect(() => {
     const handleKeyDown = async (e) => {
       const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+
+      // Alt+V: Open Universal Voucher Menu (Photo 18)
+      if (e.altKey && (e.key === 'v' || e.key === 'V')) {
+        e.preventDefault();
+        setVoucherMenuOpen(true);
+        return;
+      }
+
+      // Shift+D: Open Day-End Cashier Reconciliation
+      if (e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        setDayEndDrawerOpen(true);
+        return;
+      }
+
+      // Alt+C: Open Universal Report Criterion Filter (Photo 21)
+      if (e.altKey && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        setReportCriterionOpen(true);
+        return;
+      }
+
+      // Ctrl+B: Cycle Bill Type
+      if (isCtrlOrMeta && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        cycleInvoiceType();
+        return;
+      }
 
       // Alt + 1 through Alt + 9, Alt + 0: Switch Multi-Bill Slots
       if (e.altKey && !e.ctrlKey && !e.metaKey) {
@@ -416,9 +531,18 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
 
     const validQty = Math.max(1, parseInt(qty, 10) || 1);
     const stripSize = product.strip_size || 10;
-    const unitPrice = isLoose
-      ? Math.round((selectedBatch.mrp / stripSize) * 100) / 100
-      : selectedBatch.mrp;
+
+    let unitPrice = 0;
+    if (invoiceType === 'DOCTOR_SAMPLE' || invoiceType === 'BREAKAGE_OUTWARD') {
+      unitPrice = 0;
+    } else if (invoiceType === 'HOSPITAL_SUPPLY') {
+      const ptrRate = selectedBatch.purchase_rate || (selectedBatch.mrp * 0.75);
+      unitPrice = isLoose ? Math.round((ptrRate / stripSize) * 100) / 100 : ptrRate;
+    } else {
+      unitPrice = isLoose
+        ? Math.round((selectedBatch.mrp / stripSize) * 100) / 100
+        : selectedBatch.mrp;
+    }
 
     const existingIndex = cart.findIndex(
       (item) =>
@@ -603,13 +727,21 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
     }
 
     try {
+      const defaultName = 
+        invoiceType === 'DOCTOR_SAMPLE' ? (doctorName ? `Sample: Dr. ${doctorName}` : 'Doctor Sample Dispense') :
+        invoiceType === 'BREAKAGE_OUTWARD' ? 'Counter Breakage' :
+        invoiceType === 'HOSPITAL_SUPPLY' ? (customerName.trim() || 'Hospital / Clinic Supply') :
+        'Cash Customer';
+
       const invoiceData = {
-        customer_name: customerName.trim() || 'Cash Customer',
+        invoice_type: invoiceType,
+        notes: slotNotes.trim() || (invoiceType === 'DOCTOR_SAMPLE' ? 'Doctor Free Sample' : invoiceType === 'BREAKAGE_OUTWARD' ? 'Counter Breakage / Spillage' : null),
+        customer_name: customerName.trim() || defaultName,
         customer_mobile: customerMobile.trim() || null,
         customer_address: customerAddress.trim() || 'Ghoti',
         doctor_name: doctorName.trim() || null,
         doctor_reg_no: doctorRegNo.trim() || null,
-        payment_mode: paymentMode,
+        payment_mode: invoiceType === 'DOCTOR_SAMPLE' || invoiceType === 'BREAKAGE_OUTWARD' ? 'cash' : paymentMode,
         total_amount: Number(subtotal.toFixed(2)),
         discount: Number((parseFloat(discount) || 0).toFixed(2)),
         final_amount: Number(netPayable.toFixed(2))
@@ -746,13 +878,117 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
             <span>Ledger (Alt+T)</span>
           </button>
 
+          <button
+            onClick={() => setVoucherMenuOpen(true)}
+            className="px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 text-white font-mono font-bold text-xs flex items-center space-x-1.5 shadow-2xs transition-all"
+            title="वाऊचर मेनू (Alt+V)"
+          >
+            <Layers className="w-3.5 h-3.5 text-emerald-400" />
+            <span>वाऊचर (Alt+V)</span>
+          </button>
+
+          <button
+            onClick={() => setDayEndDrawerOpen(true)}
+            className="px-2.5 py-1 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-mono font-bold text-xs flex items-center space-x-1.5 transition-all"
+            title="गल्ला ताळमेळ व क्लोजिंग (Shift+D)"
+          >
+            <Clock className="w-3.5 h-3.5 text-amber-700" />
+            <span>गल्ला (Shift+D)</span>
+          </button>
+
+          <button
+            onClick={() => setReportCriterionOpen(true)}
+            className="px-2.5 py-1 rounded-md bg-indigo-100 hover:bg-indigo-200 text-indigo-900 border border-indigo-300 font-mono font-bold text-xs flex items-center space-x-1.5 transition-all"
+            title="निकष व्याख्या व शोध फिल्टर (Alt+C)"
+          >
+            <Filter className="w-3.5 h-3.5 text-indigo-700" />
+            <span>निकष (Alt+C)</span>
+          </button>
+
           <div className="px-3 py-1 rounded-md bg-emerald-50 border border-emerald-300 text-emerald-800 font-mono font-bold text-xs flex items-center space-x-2">
             <span>Slot {activeSlotIdx + 1} =&gt;</span>
             <span className="text-emerald-950 text-sm font-extrabold">₹{netPayable.toFixed(2)}</span>
           </div>
           <span className="text-[10px] text-slate-500 font-mono hidden xl:inline">
-            F3: Add • Alt+T: Ledger • Alt+R: Return • F9: Print
+            Alt+V: वाऊचर • Shift+D: गल्ला • Ctrl+B: बिल प्रकार • F9: Print
           </span>
+        </div>
+      </div>
+
+      {/* PHASE 3: SPECIALIZED BILLING TYPE SELECTOR (Photos 17 & 19: Stock-Out Options - Ctrl+B) */}
+      <div className="bg-slate-100 border-b border-slate-200 px-4 py-1.5 flex items-center justify-between text-xs font-mono">
+        <div className="flex items-center space-x-2">
+          <span className="text-slate-500 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1">
+            <Layers className="w-3.5 h-3.5 text-slate-600" />
+            बिल प्रकार:
+          </span>
+
+          <button
+            onClick={() => setSlotInvoiceType('RETAIL')}
+            className={`px-2.5 py-1 rounded-md font-bold transition-all text-xs flex items-center gap-1 ${
+              invoiceType === 'RETAIL'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-300'
+            }`}
+          >
+            <ShoppingCart className="w-3.5 h-3.5" />
+            <span>किरकोळ विक्री (MRP)</span>
+          </button>
+
+          <button
+            onClick={() => setSlotInvoiceType('HOSPITAL_SUPPLY')}
+            className={`px-2.5 py-1 rounded-md font-bold transition-all text-xs flex items-center gap-1 ${
+              invoiceType === 'HOSPITAL_SUPPLY'
+                ? 'bg-purple-700 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-300'
+            }`}
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            <span>हॉस्पिटल पुरवठा (PTR)</span>
+          </button>
+
+          <button
+            onClick={() => setSlotInvoiceType('DOCTOR_SAMPLE')}
+            className={`px-2.5 py-1 rounded-md font-bold transition-all text-xs flex items-center gap-1 ${
+              invoiceType === 'DOCTOR_SAMPLE'
+                ? 'bg-rose-600 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-300'
+            }`}
+          >
+            <Stethoscope className="w-3.5 h-3.5" />
+            <span>डॉक्टर सॅम्पल (₹0)</span>
+          </button>
+
+          <button
+            onClick={() => setSlotInvoiceType('BREAKAGE_OUTWARD')}
+            className={`px-2.5 py-1 rounded-md font-bold transition-all text-xs flex items-center gap-1 ${
+              invoiceType === 'BREAKAGE_OUTWARD'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-300'
+            }`}
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span>काऊंटर फुटतूट (₹0)</span>
+          </button>
+        </div>
+
+        <div className="flex items-center space-x-3 text-[11px]">
+          {invoiceType === 'HOSPITAL_SUPPLY' && (
+            <span className="text-purple-700 font-bold bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+              हॉस्पिटल घाऊक PTR दर लागू
+            </span>
+          )}
+          {invoiceType === 'DOCTOR_SAMPLE' && (
+            <span className="text-rose-700 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+              मोफत सॅम्पल - दर ₹0.00
+            </span>
+          )}
+          {invoiceType === 'BREAKAGE_OUTWARD' && (
+            <span className="text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+              स्टॉकमधून वजा - महसूल ₹0.00
+            </span>
+          )}
+          <span className="text-slate-400">Ctrl+B: बिल प्रकार बदला</span>
         </div>
       </div>
 
@@ -1568,6 +1804,28 @@ export default function BillingCounter({ currentUser, featureToggles, storeProfi
           setShortageToast(`रिटर्न नोंद #${res.return_no} यशस्वी!`);
           setTimeout(() => setShortageToast(null), 4000);
         }}
+      />
+
+      {/* Phase 3: Universal Voucher Navigator Modal (Photo 18 - Alt+V) */}
+      <VoucherMenuModal
+        isOpen={voucherMenuOpen}
+        onClose={() => setVoucherMenuOpen(false)}
+        onSelectAction={handleVoucherAction}
+      />
+
+      {/* Phase 3: Day-End Cashier Drawer Reconciliation (Shift+D) */}
+      <DayEndCashierModal
+        isOpen={dayEndDrawerOpen}
+        onClose={() => setDayEndDrawerOpen(false)}
+        currentUser={currentUser}
+        storeProfile={storeProfile}
+      />
+
+      {/* Phase 3: Universal Master Report Criterion Filter (Photo 21 - Alt+C) */}
+      <ReportCriterionModal
+        isOpen={reportCriterionOpen}
+        onClose={() => setReportCriterionOpen(false)}
+        storeProfile={storeProfile}
       />
 
     </div>
