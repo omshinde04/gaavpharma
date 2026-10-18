@@ -26,10 +26,17 @@ import {
   Printer,
   Building2,
   Landmark,
-  FileSpreadsheet
+  FileSpreadsheet,
+  DollarSign,
+  IndianRupee,
+  Check,
+  AlertCircle,
+  ArrowRight,
+  Share2
 } from 'lucide-react';
 import { api } from '../services/api';
 import ReceiptModal from './ReceiptModal';
+import ErrorBoundary from './ErrorBoundary';
 
 const STANDARD_EXPENSE_HEADS = [
   'Shop Electricity / Light Bill (MSEDCL)',
@@ -85,7 +92,11 @@ export default function DailyRegisterKhata({ currentUser, featureToggles, storeP
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [showSettleModal, setShowSettleModal] = useState(null); // customer object
   const [settleAmount, setSettleAmount] = useState('');
+  const [settleMode, setSettleMode] = useState('CASH'); // 'CASH' | 'UPI'
+  const [settleRefNo, setSettleRefNo] = useState('');
   const [settleNote, setSettleNote] = useState('Counter cash settlement');
+  const [settleSuccessData, setSettleSuccessData] = useState(null); // stores receipt voucher details for alert modal
+  const [isSettling, setIsSettling] = useState(false);
   const [customerSearch, setCustomerSearch] = useState('');
 
   // Add Customer Form
@@ -261,19 +272,100 @@ export default function DailyRegisterKhata({ currentUser, featureToggles, storeP
     e.preventDefault();
     const amt = parseFloat(settleAmount);
     if (isNaN(amt) || amt <= 0) {
-      alert('Please enter a valid payment amount.');
+      alert('कृपया योग्य रक्कम प्रविष्ट करा (Please enter a valid payment amount).');
       return;
     }
 
+    const currentBal = Number(showSettleModal.balance || 0);
+    if (amt > currentBal) {
+      if (!confirm(`जमा रक्कम (₹${amt.toFixed(2)}) ही चालू बाकी (₹${currentBal.toFixed(2)}) पेक्षा जास्त आहे. पुढे जायचे का?`)) {
+        return;
+      }
+    }
+
+    setIsSettling(true);
     try {
-      await api.addKhataPayment(showSettleModal.id, amt, settleNote);
+      // 1. Create official MediVision RECEIPT Voucher (F6) with automatic cross-posting
+      let voucherRes = null;
+      if (api.createAccountingVoucher) {
+        voucherRes = await api.createAccountingVoucher({
+          voucher_type: 'RECEIPT',
+          date: new Date().toISOString().slice(0, 10),
+          party_type: 'CUSTOMER',
+          party_id: showSettleModal.id,
+          party_name: showSettleModal.name,
+          amount: amt,
+          payment_mode: settleMode,
+          reference_no: settleRefNo || `KHATA-${showSettleModal.mobile ? showSettleModal.mobile.slice(-4) : 'SETTL'}`,
+          narration: settleNote || `Khata debt settlement - ${showSettleModal.name} (${settleMode === 'CASH' ? 'रोख गल्ला जमा' : 'बँक/UPI जमा'})`
+        });
+      } else {
+        await api.addKhataPayment(showSettleModal.id, amt, settleNote);
+      }
+
+      const prevBal = currentBal;
+      const remBal = Math.max(0, prevBal - amt);
+
+      // 2. Prepare settlement success data for the alert confirmation modal
+      setSettleSuccessData({
+        voucher_no: voucherRes?.voucher_no || `REC-${Date.now().toString().slice(-4)}`,
+        customer_id: showSettleModal.id,
+        customer_name: showSettleModal.name,
+        customer_mobile: showSettleModal.mobile,
+        amount_settled: amt,
+        payment_mode: settleMode,
+        destination_label: settleMode === 'CASH'
+          ? '💵 काउंटर गल्ला (Physical Cash Drawer & Cash Book)'
+          : '📱 बँक खाते / ऑनलाइन वही (Bank Account & UPI Book)',
+        previous_balance: prevBal,
+        remaining_balance: remBal,
+        reference_no: settleRefNo,
+        date_time: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+        narration: settleNote || `Khata debt settlement - ${showSettleModal.name}`
+      });
+
       setShowSettleModal(null);
       setSettleAmount('');
-      loadData();
+      setSettleRefNo('');
+      setSettleNote('');
+      await loadData();
     } catch (err) {
-      console.error(err);
-      alert('Failed to settle payment');
+      console.error('Failed to settle payment:', err);
+      alert('जमा नोंद करताना त्रुटी आली: ' + err.message);
+    } finally {
+      setIsSettling(false);
     }
+  };
+
+  const sendSettlementWhatsAppReceipt = async (data) => {
+    if (!data) return;
+    const mobile = (data.customer_mobile || '').replace(/\D/g, '');
+    const phone = mobile.startsWith('91') ? mobile : `91${mobile}`;
+    const storeTitle = (storeProfile?.store_name || 'Medical Stores').toUpperCase();
+    const contactPhone = storeProfile?.phone || '+91 98220 12345';
+    const storeAddr = storeProfile?.address || '';
+
+    const msg = `*${storeTitle}*%0A` +
+      (storeAddr ? `${storeAddr}%0A` : '') +
+      `--------------------------------%0A` +
+      `✅ *खाते जमा अधिकृत पावती (RECEIPT)*%0A` +
+      `पावती क्र: *${data.voucher_no}*%0A` +
+      `दिनांक: ${data.date_time}%0A%0A` +
+      `ग्राहक: *${data.customer_name}*%0A` +
+      `जमा रक्कम: *₹${Number(data.amount_settled).toFixed(2)}*%0A` +
+      `भरणा प्रकार: *${data.payment_mode === 'CASH' ? 'CASH (रोख गल्ल्यात जमा)' : 'UPI / BANK (ऑनलाइन जमा)'}*%0A%0A` +
+      `पूर्वीची बाकी: ₹${Number(data.previous_balance).toFixed(2)}%0A` +
+      `*उर्वरित बाकी: ₹${Number(data.remaining_balance).toFixed(2)}* ${data.remaining_balance === 0 ? '(खाते पूर्ण निरंक ✅)' : ''}%0A` +
+      `--------------------------------%0A` +
+      `आपल्या सहकार्याबद्दल मनःपूर्वक धन्यवाद! 🙏%0A` +
+      `संपर्क: ${contactPhone}`;
+
+    const url = `https://wa.me/${phone}?text=${msg}`;
+    await api.openExternalUrl(url);
+  };
+
+  const handlePrintSettlementSlip = () => {
+    window.print();
   };
 
   const sendWhatsAppReminder = async (customer) => {
@@ -625,7 +717,7 @@ export default function DailyRegisterKhata({ currentUser, featureToggles, storeP
                 <Banknote className="w-3.5 h-3.5 text-amber-600" />
               </div>
               <div className="text-xl font-bold font-mono text-amber-800 mt-1">
-                ₹{summary.today?.cash_total?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                ₹{(summary.today?.cash_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
               <div className="text-[10px] text-slate-500 mt-0.5">
                 Physical drawer balance
@@ -637,8 +729,8 @@ export default function DailyRegisterKhata({ currentUser, featureToggles, storeP
                 <span>Net Cash Movement</span>
                 <DollarSign className="w-3.5 h-3.5 text-slate-600" />
               </div>
-              <div className={`text-xl font-bold font-mono mt-1 ${voucherMetrics.netCash >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                {voucherMetrics.netCash >= 0 ? '+' : ''}₹{voucherMetrics.netCash.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              <div className={`text-xl font-bold font-mono mt-1 ${(voucherMetrics?.netCash || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                {(voucherMetrics?.netCash || 0) >= 0 ? '+' : ''}₹{(voucherMetrics?.netCash || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5">
                 Receipts minus Payments
@@ -954,9 +1046,12 @@ export default function DailyRegisterKhata({ currentUser, featureToggles, storeP
                               onClick={() => {
                                 setShowSettleModal(cust);
                                 setSettleAmount(String(cust.balance || ''));
+                                setSettleMode('CASH');
+                                setSettleRefNo('');
+                                setSettleNote(`Counter debt settlement - ${cust.name}`);
                               }}
                               disabled={!hasBalance}
-                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded text-xs font-medium shadow-2xs transition-colors"
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded text-xs font-medium shadow-2xs transition-colors cursor-pointer"
                             >
                               Settle (जमा)
                             </button>
@@ -1017,7 +1112,10 @@ export default function DailyRegisterKhata({ currentUser, featureToggles, storeP
                       <tr key={v.id || idx} className="hover:bg-slate-50 transition-colors">
                         <td className="py-2.5 px-3.5 text-center text-slate-400 text-[10px]">{idx + 1}</td>
                         <td className="py-2.5 px-3.5 text-slate-600 font-sans">
-                          {new Date(v.date || v.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                          {(() => {
+                            const d = new Date(v.date || v.created_at);
+                            return isNaN(d.getTime()) ? '-' : d.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                          })()}
                         </td>
                         <td className="py-2.5 px-3.5 font-bold text-slate-900">{v.voucher_no}</td>
                         <td className="py-2.5 px-3.5 font-sans font-bold">
@@ -1437,77 +1535,367 @@ export default function DailyRegisterKhata({ currentUser, featureToggles, storeP
         </div>
       )}
 
-      {/* Settle Khata Modal */}
+      {/* Settle Khata Modal with Explicit Destination & Live Balance Preview */}
       {showSettleModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-sm p-5 space-y-3.5 animate-in fade-in zoom-in-95">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md p-5 space-y-4 animate-in fade-in zoom-in-95">
             <div className="flex justify-between items-center border-b pb-2.5">
-              <h3 className="font-semibold text-sm text-slate-900">
-                Settle Khata Debt (जमा नोंद)
-              </h3>
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold">
+                  <Landmark className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900">
+                    Settle Khata Debt / खाते जमा नोंद (F6 Receipt)
+                  </h3>
+                  <p className="text-[10px] text-slate-400">
+                    ग्राहक बाकी जमा नोंद व अधिकृत कॅश/बँक पावती तयार करा
+                  </p>
+                </div>
+              </div>
               <button
+                type="button"
                 onClick={() => setShowSettleModal(null)}
-                className="text-slate-400 hover:text-slate-700 text-sm font-semibold"
+                className="text-slate-400 hover:text-slate-700 text-sm font-semibold p-1"
               >
                 ✕
               </button>
             </div>
 
             <form onSubmit={handleSettlePayment} className="space-y-3 font-sans text-xs">
-              <div>
-                <span className="text-slate-500 block text-[11px]">Customer</span>
-                <span className="font-semibold text-slate-900 text-sm">{showSettleModal.name}</span>
-                <span className="text-slate-400 block text-[10px] font-mono">{showSettleModal.mobile}</span>
+              {/* Customer Info Card */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold block">ग्राहक खाते</span>
+                  <span className="font-bold text-slate-900 text-sm block">{showSettleModal.name}</span>
+                  <span className="text-slate-500 font-mono text-[11px]">{showSettleModal.mobile}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold block">चालू बाकी (Pending)</span>
+                  <span className="font-bold font-mono text-rose-700 text-base">
+                    ₹{Number(showSettleModal.balance || 0).toFixed(2)} Dr
+                  </span>
+                </div>
               </div>
 
-              <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 flex justify-between items-center">
-                <span className="text-slate-600 font-medium">Pending Dues:</span>
-                <span className="font-bold font-mono text-rose-700 text-sm">
-                  ₹{Number(showSettleModal.balance || 0).toFixed(2)}
-                </span>
+              {/* Amount Input & Quick Chips */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="font-semibold text-slate-800">जमा रक्कम (Amount Received ₹) *</label>
+                  <button
+                    type="button"
+                    onClick={() => setSettleAmount(String(showSettleModal.balance || ''))}
+                    className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 cursor-pointer"
+                  >
+                    पूर्ण बाकी (Full Dues: ₹{Number(showSettleModal.balance || 0).toFixed(2)})
+                  </button>
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 font-bold text-slate-400 text-sm">₹</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    required
+                    autoFocus
+                    value={settleAmount}
+                    onChange={(e) => setSettleAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full pl-7 pr-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-mono font-bold text-slate-900 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+                  />
+                </div>
+
+                {/* Quick denomination chips */}
+                <div className="flex items-center gap-1.5 mt-2">
+                  <span className="text-[10px] text-slate-400">Quick:</span>
+                  {[100, 200, 500, 1000].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setSettleAmount(String(val))}
+                      className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded text-[10px] font-mono font-medium text-slate-700 transition-colors"
+                    >
+                      +₹{val}
+                    </button>
+                  ))}
+                </div>
               </div>
 
+              {/* Dynamic Remaining Balance Preview */}
+              {parseFloat(settleAmount) > 0 && (
+                <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-200 text-xs flex justify-between items-center">
+                  <span className="text-emerald-900 font-medium">नवीन बाकी (Remaining Balance):</span>
+                  <span className="font-bold font-mono text-sm">
+                    {(() => {
+                      const prev = Number(showSettleModal.balance || 0);
+                      const paid = parseFloat(settleAmount) || 0;
+                      const rem = Math.max(0, prev - paid);
+                      if (rem === 0) {
+                        return <span className="text-emerald-700">₹0.00 (खाते पूर्ण निरंक ✅)</span>;
+                      }
+                      return <span className="text-rose-700">₹{rem.toFixed(2)} Dr (अंशतः जमा)</span>;
+                    })()}
+                  </span>
+                </div>
+              )}
+
+              {/* Payment Destination (रक्कम कुठे जमा होणार?) */}
               <div>
-                <label className="font-medium text-slate-700 block mb-1">Payment Received (₹) *</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="1"
-                  required
-                  value={settleAmount}
-                  onChange={(e) => setSettleAmount(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs font-mono font-bold text-slate-900"
-                />
+                <label className="font-semibold text-slate-800 block mb-1.5">
+                  रक्कम कुठे जमा झाली? (Payment Mode & Destination) *
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSettleMode('CASH')}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      settleMode === 'CASH'
+                        ? 'border-emerald-600 bg-emerald-50/80 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <Banknote className={`w-4 h-4 ${settleMode === 'CASH' ? 'text-emerald-700' : 'text-slate-500'}`} />
+                      <span className={`font-bold text-xs ${settleMode === 'CASH' ? 'text-emerald-900' : 'text-slate-800'}`}>
+                        रोख (Cash in Hand)
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+                      थेट आजच्या <span className="font-semibold text-slate-700">काउंटर गल्ल्यात (Cash Drawer - Shift+D)</span> व Cash Book मध्ये जमा होईल.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSettleMode('UPI')}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                      settleMode === 'UPI'
+                        ? 'border-blue-600 bg-blue-50/80 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <QrCode className={`w-4 h-4 ${settleMode === 'UPI' ? 'text-blue-700' : 'text-slate-500'}`} />
+                      <span className={`font-bold text-xs ${settleMode === 'UPI' ? 'text-blue-900' : 'text-slate-800'}`}>
+                        बँक / UPI QR जमा
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+                      थेट दुकानाच्या <span className="font-semibold text-slate-700">बँक खात्यात / UPI Book</span> मध्ये नोंद होईल.
+                    </p>
+                  </button>
+                </div>
               </div>
 
+              {/* Optional UTR / Reference for UPI */}
+              {settleMode === 'UPI' && (
+                <div>
+                  <label className="font-medium text-slate-700 block mb-1 text-[11px]">UPI Ref / UTR Number (पर्यायी)</label>
+                  <input
+                    type="text"
+                    value={settleRefNo}
+                    onChange={(e) => setSettleRefNo(e.target.value)}
+                    placeholder="उदा. UPI-1234567890 / GPay Ref"
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono focus:bg-white"
+                  />
+                </div>
+              )}
+
+              {/* Receipt Note */}
               <div>
-                <label className="font-medium text-slate-700 block mb-1">Receipt Note</label>
+                <label className="font-medium text-slate-700 block mb-1">पावती नोंद / तपशील (Receipt Note)</label>
                 <input
                   type="text"
                   value={settleNote}
                   onChange={(e) => setSettleNote(e.target.value)}
-                  placeholder="e.g. Counter cash settlement"
+                  placeholder="उदा. दुकानावर येऊन रोख भरणा केला"
                   className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs focus:bg-white"
                 />
+              </div>
+
+              {/* MediVision Audit Compliance Banner */}
+              <div className="p-2 bg-blue-50/80 border border-blue-200/60 rounded-lg text-[10px] text-blue-800 flex items-start gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
+                <span>
+                  <strong>MediVision Standard:</strong> ही जमा नोंद थेट <strong>Cash & Bank Book</strong> मध्ये अधिकृत <strong>RECEIPT (F6)</strong> पावती म्हणून नोंदवली जाईल आणि ग्राहकाच्या खात्यातून वजा होईल.
+                </span>
               </div>
 
               <div className="flex justify-end space-x-2 pt-2 border-t">
                 <button
                   type="button"
                   onClick={() => setShowSettleModal(null)}
-                  className="px-3 py-1.5 border border-slate-200 rounded-md font-medium text-slate-600 hover:bg-slate-50"
+                  className="px-3.5 py-1.5 border border-slate-200 rounded-lg font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
                 >
-                  Cancel
+                  रद्द करा (Cancel)
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md font-medium shadow-xs"
+                  disabled={isSettling}
+                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold shadow-xs flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
                 >
-                  Confirm Settlement
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{isSettling ? 'नोंद होत आहे...' : 'जमा करा व पावती बनवा (Confirm & Issue Receipt)'}</span>
                 </button>
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Settlement Success Alert & Receipt Confirmation Modal */}
+      {settleSuccessData && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 space-y-4 animate-in fade-in zoom-in-95">
+            {/* Header Success Checkmark */}
+            <div className="text-center space-y-2">
+              <div className="w-14 h-14 bg-emerald-100 rounded-full flex items-center justify-center mx-auto text-emerald-600 shadow-xs">
+                <CheckCircle2 className="w-8 h-8" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">
+                खाते जमा पावती यशस्वी! (Khata Payment Received)
+              </h3>
+              <p className="text-xs text-slate-500">
+                ग्राहकाचा भरणा यशस्वीरित्या जमा झाला असून अधिकृत पावती तयार झाली आहे.
+              </p>
+            </div>
+
+            {/* Voucher Badge & Amount Hero */}
+            <div className="p-4 bg-gradient-to-br from-emerald-50 to-teal-50/50 rounded-xl border border-emerald-200 text-center space-y-1">
+              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-white border border-emerald-300 rounded-full text-[10px] font-mono font-bold text-emerald-800 shadow-2xs">
+                <FileText className="w-3 h-3 text-emerald-600" />
+                <span>पावती क्र: {settleSuccessData.voucher_no}</span>
+              </div>
+              <div className="text-2xl font-bold font-mono text-emerald-800 mt-1">
+                ₹{Number(settleSuccessData.amount_settled).toFixed(2)}
+              </div>
+              <div className="text-[11px] font-semibold text-emerald-900">
+                {settleSuccessData.payment_mode === 'CASH' ? 'रोख भरणा (Cash Received)' : 'ऑनलाइन / UPI भरणा'}
+              </div>
+            </div>
+
+            {/* Detailed Breakdown Grid */}
+            <div className="bg-slate-50 rounded-xl border border-slate-200 p-3 space-y-2 text-xs font-sans">
+              <div className="flex justify-between items-center pb-2 border-b border-slate-200/80">
+                <span className="text-slate-500">ग्राहक (Customer):</span>
+                <span className="font-bold text-slate-900">
+                  {settleSuccessData.customer_name} ({settleSuccessData.customer_mobile})
+                </span>
+              </div>
+
+              <div className="flex justify-between items-start pb-2 border-b border-slate-200/80">
+                <span className="text-slate-500 shrink-0">रक्कम कुठे जमा झाली:</span>
+                <span className="font-bold text-right text-slate-900">
+                  {settleSuccessData.destination_label}
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center pb-2 border-b border-slate-200/80">
+                <span className="text-slate-500">आधीची बाकी (Old Balance):</span>
+                <span className="font-mono text-slate-700">₹{Number(settleSuccessData.previous_balance).toFixed(2)} Dr</span>
+              </div>
+
+              <div className="flex justify-between items-center pb-2 border-b border-slate-200/80">
+                <span className="text-slate-500">जमा रक्कम (Paid Amount):</span>
+                <span className="font-bold font-mono text-emerald-700">- ₹{Number(settleSuccessData.amount_settled).toFixed(2)}</span>
+              </div>
+
+              <div className="flex justify-between items-center pt-0.5">
+                <span className="font-bold text-slate-800">उर्वरित बाकी (New Due):</span>
+                <span className={`font-bold font-mono text-sm ${settleSuccessData.remaining_balance === 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  ₹{Number(settleSuccessData.remaining_balance).toFixed(2)} {settleSuccessData.remaining_balance === 0 ? '(निरंक / Settled ✅)' : 'Dr'}
+                </span>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="space-y-2 pt-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={handlePrintSettlementSlip}
+                  className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-800 rounded-xl border border-slate-300 text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5 text-blue-600" />
+                  <span>पावती प्रिंट करा (Print)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => sendSettlementWhatsAppReceipt(settleSuccessData)}
+                  className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>WhatsApp पोच पावती</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSettleSuccessData(null)}
+                className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              >
+                पूर्ण झाले (Done / Close)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden 80mm Printable Settlement Slip for window.print() */}
+      {settleSuccessData && (
+        <div className="hidden print:block font-mono text-black p-4 max-w-[80mm] mx-auto text-xs">
+          <div className="text-center pb-2 border-b border-black">
+            <div className="font-bold text-sm uppercase">{storeProfile?.store_name || 'GAAV PHARMA MEDICAL'}</div>
+            <div className="text-[10px]">{storeProfile?.address || 'Main Road, Ghoti'}</div>
+            <div className="text-[10px]">फोन: {storeProfile?.phone || '-'} | DL: {storeProfile?.dl_number || '-'}</div>
+          </div>
+          <div className="text-center font-bold text-xs py-1 border-b border-dashed border-black">
+            खाते जमा अधिकृत पोच पावती (RECEIPT)
+          </div>
+          <div className="py-1 text-[10px] space-y-0.5 border-b border-dashed border-black">
+            <div className="flex justify-between">
+              <span>पावती क्र:</span>
+              <span className="font-bold">{settleSuccessData.voucher_no}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>तारीख:</span>
+              <span>{settleSuccessData.date_time}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>ग्राहक:</span>
+              <span className="font-bold">{settleSuccessData.customer_name}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>मोबाईल:</span>
+              <span>{settleSuccessData.customer_mobile}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>भरणा प्रकार:</span>
+              <span className="font-bold">{settleSuccessData.payment_mode}</span>
+            </div>
+          </div>
+
+          <div className="py-2 text-[11px] space-y-1 border-b border-black">
+            <div className="flex justify-between">
+              <span>आधीची बाकी:</span>
+              <span>₹ {Number(settleSuccessData.previous_balance).toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between font-bold text-sm">
+              <span>जमा रक्कम:</span>
+              <span>₹ {Number(settleSuccessData.amount_settled).toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between font-bold pt-1 border-t border-dashed border-black">
+              <span>उर्वरित बाकी:</span>
+              <span>₹ {Number(settleSuccessData.remaining_balance).toFixed(2)} {settleSuccessData.remaining_balance === 0 ? '(निरंक)' : ''}</span>
+            </div>
+          </div>
+
+          <div className="pt-6 pb-2 flex justify-between text-[10px]">
+            <div className="border-t border-black w-24 text-center pt-1">ग्राहक सही</div>
+            <div className="border-t border-black w-24 text-center pt-1">दुकानदार सही</div>
+          </div>
+          <div className="text-center text-[9px] pt-1">*** आपल्या सहकार्याबद्दल धन्यवाद ***</div>
         </div>
       )}
 

@@ -14,6 +14,7 @@ import SuperAdminConsole from './components/SuperAdminConsole';
 import LicenseActivationModal from './components/LicenseActivationModal';
 import BackupExitModal from './components/BackupExitModal';
 import ShortcutsGuideModal from './components/ShortcutsGuideModal';
+import ErrorBoundary from './components/ErrorBoundary';
 import { api } from './services/api';
 import { AlertCircle, Key } from 'lucide-react';
 
@@ -288,37 +289,39 @@ export default function App() {
 
         {/* Center Main Stage Screen */}
         <main className="flex-1 flex flex-col overflow-hidden bg-slate-50">
-          {activeTab === 'billing' && (
-            <BillingCounter
-              currentUser={currentUser}
-              featureToggles={featureToggles}
-              storeProfile={storeProfile}
-              onNavigateTab={setActiveTab}
-            />
-          )}
-          {activeTab === 'expiry' && <ExpiryRadar storeProfile={storeProfile} />}
-          {activeTab === 'inventory' && <InventoryManager />}
-          {activeTab === 'purchases' && (
-            <PurchaseDistributorManager
-              currentUser={currentUser}
-              featureToggles={featureToggles}
-              storeProfile={storeProfile}
-            />
-          )}
-          {activeTab === 'khata' && (
-            <DailyRegisterKhata
-              currentUser={currentUser}
-              featureToggles={featureToggles}
-              storeProfile={storeProfile}
-            />
-          )}
-          {activeTab === 'compliance' && (
-            <ComplianceGstHub
-              currentUser={currentUser}
-              featureToggles={featureToggles}
-              storeProfile={storeProfile}
-            />
-          )}
+          <ErrorBoundary onReset={() => setActiveTab('billing')}>
+            {activeTab === 'billing' && (
+              <BillingCounter
+                currentUser={currentUser}
+                featureToggles={featureToggles}
+                storeProfile={storeProfile}
+                onNavigateTab={setActiveTab}
+              />
+            )}
+            {activeTab === 'expiry' && <ExpiryRadar storeProfile={storeProfile} />}
+            {activeTab === 'inventory' && <InventoryManager />}
+            {activeTab === 'purchases' && (
+              <PurchaseDistributorManager
+                currentUser={currentUser}
+                featureToggles={featureToggles}
+                storeProfile={storeProfile}
+              />
+            )}
+            {activeTab === 'khata' && (
+              <DailyRegisterKhata
+                currentUser={currentUser}
+                featureToggles={featureToggles}
+                storeProfile={storeProfile}
+              />
+            )}
+            {activeTab === 'compliance' && (
+              <ComplianceGstHub
+                currentUser={currentUser}
+                featureToggles={featureToggles}
+                storeProfile={storeProfile}
+              />
+            )}
+          </ErrorBoundary>
         </main>
       </div>
 
