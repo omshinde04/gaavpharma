@@ -82,6 +82,7 @@ function createTables() {
       name TEXT NOT NULL,
       generic_salt TEXT,
       category TEXT CHECK(category IN ('medicine', 'general', 'baby_care', 'cosmetic')) DEFAULT 'medicine',
+      company TEXT DEFAULT 'General',
       rack_location TEXT,
       strip_size INTEGER DEFAULT 10,
       is_schedule_h1 BOOLEAN DEFAULT 0,
@@ -388,6 +389,9 @@ function createTables() {
     }
     if (!prodCols.some(c => c.name === 'hsn_code')) {
       db.exec("ALTER TABLE products ADD COLUMN hsn_code TEXT DEFAULT '3004';");
+    }
+    if (!prodCols.some(c => c.name === 'company')) {
+      db.exec("ALTER TABLE products ADD COLUMN company TEXT DEFAULT 'General';");
     }
   } catch (e) {}
 
@@ -1899,9 +1903,9 @@ function createDebitNote(noteData, items) {
       WHERE product_id = ? AND batch_no = ?
     `);
 
-    const updateProductTotal = db.prepare(`
-      UPDATE products
-      SET total_stock = (SELECT COALESCE(SUM(stock_qty), 0) FROM batches WHERE product_id = ?)
+    const deductBatchById = db.prepare(`
+      UPDATE batches
+      SET stock_qty = MAX(0, stock_qty - ?)
       WHERE id = ?
     `);
 
@@ -1934,8 +1938,11 @@ function createDebitNote(noteData, items) {
       );
 
       // Deduct returned quantity from active stock
-      deductBatch.run(qty, productId, item.batch_no);
-      updateProductTotal.run(productId, productId);
+      if (item.batch_id || item.batchId) {
+        deductBatchById.run(qty, item.batch_id || item.batchId);
+      } else if (productId && item.batch_no) {
+        deductBatch.run(qty, productId, item.batch_no);
+      }
     }
 
     // Ledger Entry for Debit Note Return
@@ -2140,13 +2147,13 @@ function getGstTaxSummary(period = {}) {
   const debitItems = db.prepare(`
     SELECT 
       dni.id,
-      dni.taxable_value,
+      dni.taxable_amount as taxable_value,
       COALESCE(dni.gst_rate, 12) as gst_rate,
       dni.cgst_amount,
       dni.sgst_amount,
-      dni.total_claim,
+      dni.total_amount as total_claim,
       dn.note_date,
-      dn.debit_note_no
+      dn.note_no as debit_note_no
     FROM debit_note_items dni
     JOIN debit_notes dn ON dni.debit_note_id = dn.id
     WHERE date(dn.note_date) >= date(?) AND date(dn.note_date) <= date(?)

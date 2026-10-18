@@ -9,6 +9,7 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "dev:web": "vite",
     "test": "node test_workflow.js",
+    "test:sqlite": "ELECTRON_RUN_AS_NODE=1 electron test_electron_db.js && ELECTRON_RUN_AS_NODE=1 electron audit_sql.js",
     "build": "vite build",
     "build:electron": "vite build && electron-builder",
     "build:win": "vite build && electron-builder --win nsis",
