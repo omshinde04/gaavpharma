@@ -960,6 +960,7 @@ export const api = {
         }
         batches.push({
           ...b,
+          product_id: b.product_id || p.id,
           product_name: p.name,
           generic_salt: p.generic_salt,
           category: p.category,

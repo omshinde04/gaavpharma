@@ -399,6 +399,19 @@ function createTables() {
   } catch (e) {}
 
   try {
+    const distCols = db.prepare("PRAGMA table_info(distributors)").all();
+    if (!distCols.some(c => c.name === 'dl_number')) {
+      db.exec("ALTER TABLE distributors ADD COLUMN dl_number TEXT;");
+    }
+    if (!distCols.some(c => c.name === 'address')) {
+      db.exec("ALTER TABLE distributors ADD COLUMN address TEXT;");
+    }
+    if (!distCols.some(c => c.name === 'payment_terms_days')) {
+      db.exec("ALTER TABLE distributors ADD COLUMN payment_terms_days INTEGER DEFAULT 21;");
+    }
+  } catch (e) {}
+
+  try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS shortage_diary (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1822,7 +1835,12 @@ function getDebitNotes(limit = 50) {
 function getDebitNoteDetails(noteId) {
   if (!db) initDatabase();
   const note = db.prepare(`
-    SELECT dn.*, d.name as distributor_name, d.phone as distributor_phone, d.gstin as distributor_gstin, d.dl_number as distributor_dl, d.address as distributor_address
+    SELECT dn.*, 
+      COALESCE(d.name, 'Distributor') as distributor_name, 
+      COALESCE(d.phone, '') as distributor_phone, 
+      COALESCE(d.gstin, '') as distributor_gstin, 
+      COALESCE(d.dl_number, '') as distributor_dl, 
+      COALESCE(d.address, '') as distributor_address
     FROM debit_notes dn
     LEFT JOIN distributors d ON dn.distributor_id = d.id
     WHERE dn.id = ?
@@ -1889,6 +1907,11 @@ function createDebitNote(noteData, items) {
 
     for (const item of items) {
       const qty = parseInt(item.qty, 10) || 0;
+      let productId = item.product_id;
+      if (!productId && item.batch_no) {
+        const found = db.prepare(`SELECT product_id FROM batches WHERE batch_no = ? LIMIT 1`).get(item.batch_no);
+        if (found) productId = found.product_id;
+      }
       const rate = parseFloat(item.purchase_rate) || 0;
       const gstRate = item.gst_rate != null ? parseFloat(item.gst_rate) : (parseFloat(item.gst_pct) || 12);
       const taxable = item.taxable_amount != null ? parseFloat(item.taxable_amount) : (qty * rate);
@@ -1898,7 +1921,7 @@ function createDebitNote(noteData, items) {
 
       stmtItem.run(
         debitNoteId,
-        item.product_id,
+        productId,
         item.batch_no,
         item.expiry_date,
         qty,
@@ -1911,8 +1934,8 @@ function createDebitNote(noteData, items) {
       );
 
       // Deduct returned quantity from active stock
-      deductBatch.run(qty, item.product_id, item.batch_no);
-      updateProductTotal.run(item.product_id, item.product_id);
+      deductBatch.run(qty, productId, item.batch_no);
+      updateProductTotal.run(productId, productId);
     }
 
     // Ledger Entry for Debit Note Return

@@ -83,15 +83,15 @@ export default function ExpiryRadar({ storeProfile }) {
   const handleInitiateReturn = (itemsToReturn) => {
     setCreatedDebitNoteResult(null);
     const prepared = itemsToReturn.map(b => ({
-      batchId: b.id,
-      product_id: b.product_id,
-      product_name: b.product_name,
+      batchId: b.id || b.batch_id,
+      product_id: b.product_id || b.productId || b.prod_id,
+      product_name: b.product_name || b.name,
       batch_no: b.batch_no,
       expiry_date: b.expiry_date,
       return_qty: b.stock_qty,
       max_qty: b.stock_qty,
       purchase_rate: b.purchase_rate || b.mrp * 0.7,
-      gst_rate: 12
+      gst_rate: b.gst_rate || 12
     }));
     setReturnBatches(prepared);
     setShowDebitModal(true);
@@ -184,8 +184,8 @@ export default function ExpiryRadar({ storeProfile }) {
       setCreatedDebitNoteResult(res);
       await loadRadar();
     } catch (err) {
-      console.error(err);
-      alert('Failed to issue GST Debit Note.');
+      console.error('Failed to issue GST Debit Note:', err);
+      alert('डेबिट नोट तयार करताना त्रुटी: ' + (err.message || 'Failed to issue GST Debit Note.'));
     } finally {
       setIsSubmitting(false);
     }
